@@ -56,3 +56,7 @@ Strings returned by `chimera_work_get`, `chimera_episode_get`, `chimera_recall_a
 See [PORTING.md](PORTING.md) for upstream module coverage, intentional deviations and the outstanding feature-parity requirements.
 
 Attribution: [LarytheLord / Project-Chimera](https://github.com/LarytheLord/Project-Chimera). This is an independent Flow implementation of the behavioural interfaces, not a direct translation of the Python source.
+
+## Native Ollama semantic-memory integration
+
+The [Ollama semantic-memory adapter](docs/ollama-and-semantic-memory.md) provides real local /api/embed POST requests, validated 1–4096D vectors, a bounded full-dimensional cosine index, transactional CSM1 snapshot loading, and a runnable example in `src/ollama_demo.flow`. It requires a running Ollama server and installed embedding model; CI exercises the transport with a deterministic local HTTP fixture. This independent memory store is **not yet wired into the Gemini agent prompt loop** and is not a replacement for Chroma/ANN search.
