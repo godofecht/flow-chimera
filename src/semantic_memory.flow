@@ -1,0 +1,198 @@
+# Full-dimensional semantic memory for real model-generated embeddings.
+# Independent of the 8D FCH2 compatibility store. All strings and vectors
+# are owned; returned matches are borrowed and invalidated by mutations.
+# A cosine-ranked bounded ring; no embedding model or network is hidden here.
+
+extern {
+    function calloc(n: i64, size: i64) -> ptr<void>
+    function free(memory: ptr<void>) -> void
+    function strlen(value: string) -> i64
+    function strcpy(dst: ptr<u8>, src: ptr<u8>) -> ptr<u8>
+    function sqrt(value: f64) -> f64
+}
+
+const SEM_CAP: i32 = 64
+const SEM_DIM_CAP: i32 = 4096
+const SEM_TEXT_CAP: i32 = 8192
+
+export struct SemanticMatch {
+    found: bool,
+    observation: string,
+    action: string,
+    outcome: string,
+    similarity: f64,
+    dimension: i32
+}
+
+let mut sem_ready: bool = false
+let mut sem_observations: ptr<string> = null
+let mut sem_actions: ptr<string> = null
+let mut sem_outcomes: ptr<string> = null
+let mut sem_embeddings: ptr<ptr<f64>> = null
+let mut sem_dims: ptr<i32> = null
+let mut sem_next: i32 = 0
+let mut sem_size: i32 = 0
+
+function sem_copy(value: string) -> string {
+    if value == null { return null }
+    let len: i64 = strlen(value)
+    if len > SEM_TEXT_CAP { return null }
+    let target: ptr<u8> = calloc(len + 1, 1) as ptr<u8>
+    if target == null { return null }
+    strcpy(target, value as ptr<u8>)
+    return target as string
+}
+
+function sem_release(value: string) -> void {
+    if value != null { free(value as ptr<void>) }
+}
+
+function sem_evict(index: i32) -> void {
+    sem_release(sem_observations[index])
+    sem_release(sem_actions[index])
+    sem_release(sem_outcomes[index])
+    if sem_embeddings[index] != null { free(sem_embeddings[index] as ptr<void>) }
+    sem_observations[index] = null
+    sem_actions[index] = null
+    sem_outcomes[index] = null
+    sem_embeddings[index] = null
+    sem_dims[index] = 0
+}
+
+export function chimera_semantic_shutdown() -> void {
+    if sem_observations != null and sem_actions != null and sem_outcomes != null and sem_embeddings != null and sem_dims != null {
+        for i in 0 to SEM_CAP { sem_evict(i) }
+    }
+    if sem_observations != null { free(sem_observations as ptr<void>) }
+    if sem_actions != null { free(sem_actions as ptr<void>) }
+    if sem_outcomes != null { free(sem_outcomes as ptr<void>) }
+    if sem_embeddings != null { free(sem_embeddings as ptr<void>) }
+    if sem_dims != null { free(sem_dims as ptr<void>) }
+    sem_observations = null
+    sem_actions = null
+    sem_outcomes = null
+    sem_embeddings = null
+    sem_dims = null
+    sem_next = 0
+    sem_size = 0
+    sem_ready = false
+}
+
+export function chimera_semantic_init() -> bool {
+    chimera_semantic_shutdown()
+    sem_observations = calloc(SEM_CAP as i64, 8) as ptr<string>
+    sem_actions = calloc(SEM_CAP as i64, 8) as ptr<string>
+    sem_outcomes = calloc(SEM_CAP as i64, 8) as ptr<string>
+    sem_embeddings = calloc(SEM_CAP as i64, 8) as ptr<ptr<f64>>
+    sem_dims = calloc(SEM_CAP as i64, 4) as ptr<i32>
+    if sem_observations == null or sem_actions == null or sem_outcomes == null or sem_embeddings == null or sem_dims == null {
+        chimera_semantic_shutdown()
+        return false
+    }
+    sem_ready = true
+    return true
+}
+
+export function chimera_semantic_count() -> i32 {
+    return sem_size
+}
+
+export function chimera_semantic_clear() -> void {
+    if !sem_ready { return }
+    for i in 0 to SEM_CAP { sem_evict(i) }
+    sem_next = 0
+    sem_size = 0
+}
+
+function sem_norm(embedding: ptr<f64>, dim: i32) -> f64 {
+    if embedding == null or dim < 1 or dim > SEM_DIM_CAP { return -1.0 }
+    let mut magnitude: f64 = 0.0
+    for i in 0 to dim {
+        let value: f64 = embedding[i]
+        if value != value or value > 1000000.0 or value < -1000000.0 { return -1.0 }
+        magnitude = magnitude + value * value
+    }
+    if magnitude <= 0.0 { return -1.0 }
+    return sqrt(magnitude)
+}
+
+export function chimera_semantic_remember(observation: string, action: string, outcome: string, embedding: ptr<f64>, dim: i32) -> bool {
+    if !sem_ready or observation == null or action == null or outcome == null { return false }
+    let magnitude: f64 = sem_norm(embedding, dim)
+    if magnitude <= 0.0 { return false }
+    let a: string = sem_copy(observation)
+    let b: string = sem_copy(action)
+    let c: string = sem_copy(outcome)
+    let v: ptr<f64> = calloc(dim as i64, 8) as ptr<f64>
+    if a == null or b == null or c == null or v == null {
+        sem_release(a)
+        sem_release(b)
+        sem_release(c)
+        if v != null { free(v as ptr<void>) }
+        return false
+    }
+    for i in 0 to dim { v[i] = embedding[i] / magnitude }
+    sem_evict(sem_next)
+    sem_observations[sem_next] = a
+    sem_actions[sem_next] = b
+    sem_outcomes[sem_next] = c
+    sem_embeddings[sem_next] = v
+    sem_dims[sem_next] = dim
+    sem_next = (sem_next + 1) % SEM_CAP
+    if sem_size < SEM_CAP { sem_size = sem_size + 1 }
+    return true
+}
+
+function sem_none() -> SemanticMatch {
+    return SemanticMatch {found: false, observation: "", action: "", outcome: "", similarity: -2.0, dimension: 0}
+}
+
+# Returns 0=best, 1=second best; ties resolved newest-first.
+# Does not truncate, hash or project the embedding dimensions.
+export function chimera_semantic_recall(query: ptr<f64>, dim: i32, rank: i32) -> SemanticMatch {
+    if !sem_ready or rank < 0 or rank >= sem_size { return sem_none() }
+    let query_norm: f64 = sem_norm(query, dim)
+    if query_norm <= 0.0 { return sem_none() }
+    let mut scores: array<f64, 64> = [
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0,
+        -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0
+    ]
+    for i in 0 to sem_size {
+        let index: i32 = (sem_next - sem_size + i + SEM_CAP) % SEM_CAP
+        if sem_dims[index] == dim {
+            let mut dot: f64 = 0.0
+            for j in 0 to dim { dot = dot + query[j] * sem_embeddings[index][j] }
+            scores[i] = dot / query_norm
+        }
+    }
+    let mut chosen: i32 = -1
+    for k in 0 to rank + 1 {
+        chosen = -1
+        for i in 0 to sem_size {
+            if scores[i] > -2.0 {
+                if chosen < 0 { chosen = i }
+                elif scores[i] >= scores[chosen] { chosen = i }
+            }
+        }
+        if chosen < 0 { return sem_none() }
+        if k == rank {
+            let index: i32 = (sem_next - sem_size + chosen + SEM_CAP) % SEM_CAP
+            return SemanticMatch {
+                found: true,
+                observation: sem_observations[index],
+                action: sem_actions[index],
+                outcome: sem_outcomes[index],
+                similarity: scores[chosen],
+                dimension: dim
+            }
+        }
+        scores[chosen] = -2.0
+    }
+    return sem_none()
+}
