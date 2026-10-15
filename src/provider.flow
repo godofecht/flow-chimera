@@ -184,3 +184,66 @@ export function chimera_gemini_post(body: string) -> ProviderResult {
     output[count] = 0
     return ProviderResult {success: ok, body: output as string, byte_count: count, exit_status: status}
 }
+
+
+# Encode a Gemini generateContent request without interpreting prompt contents.
+# Caller owns the returned request string, released by chimera_provider_free().
+extern {
+    function snprintf(out: ptr<u8>, cap: i64, format: string, value: f64) -> i32
+}
+
+function p_append(dst: ptr<u8>, at: i32, cap: i32, text: string) -> i32 {
+    let n: i32 = strlen(text) as i32
+    if at + n >= cap { return -1 }
+    let src: ptr<u8> = text as ptr<u8>
+    for i in 0 to n { dst[at + i] = src[i] }
+    return at + n
+}
+
+function p_append_byte(dst: ptr<u8>, at: i32, cap: i32, value: u8) -> i32 {
+    if at + 1 >= cap { return -1 }
+    dst[at] = value
+    return at + 1
+}
+
+export function chimera_gemini_request(prompt: string, temperature: f64) -> string {
+    if prompt == null or temperature < 0.0 or temperature > 2.0 { return null }
+    let length: i32 = strlen(prompt) as i32
+    if length <= 0 or length > 8000 { return null }
+    let buffer: ptr<u8> = calloc(PROVIDER_MAX_REQUEST as i64, 1) as ptr<u8>
+    if buffer == null { return null }
+    let mut at: i32 = p_append(buffer, 0, PROVIDER_MAX_REQUEST, "{\"contents\":[{\"parts\":[{\"text\":\"")
+    if at < 0 { free(buffer as ptr<void>); return null }
+    let src: ptr<u8> = prompt as ptr<u8>
+    let hex: string = "0123456789abcdef"
+    let hp: ptr<u8> = hex as ptr<u8>
+    for i in 0 to length {
+        let c: u8 = src[i]
+        if c == 34 or c == 92 {
+            at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, 92)
+            at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, c)
+        } else {
+            if c == 10 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\n") }
+            else if c == 13 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\r") }
+            else if c == 9 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\t") }
+            else if c < 32 {
+                at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\u00")
+                at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, hp[(c / 16) as i32])
+                at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, hp[(c % 16) as i32])
+            } else {
+                at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, c)
+            }
+        }
+        if at < 0 { free(buffer as ptr<void>); return null }
+    }
+    at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\"}]}],\"generationConfig\":{\"temperature\":")
+    if at < 0 { free(buffer as ptr<void>); return null }
+    let mut temp_buf: array<u8, 48> = []
+    let n: i32 = snprintf(&temp_buf[0], 48, "%.3f", temperature)
+    if n <= 0 or n >= 48 { free(buffer as ptr<void>); return null }
+    at = p_append(buffer, at, PROVIDER_MAX_REQUEST, &temp_buf[0] as string)
+    at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "}}")
+    if at < 0 { free(buffer as ptr<void>); return null }
+    buffer[at] = 0
+    return buffer as string
+}
