@@ -21,6 +21,7 @@ jobs:
           ./flow-toolchain/flow run src/tool_test.flow
           ./flow-toolchain/flow run src/protocol_test.flow
           ./flow-toolchain/flow run src/ollama_embedding_test.flow
+          ./flow-toolchain/flow run src/semantic_memory_test.flow
           ./flow-toolchain/flow run src/provider_test.flow
           ./flow-toolchain/flow run src/reward_test.flow
           ./flow-toolchain/flow run src/demo.flow
