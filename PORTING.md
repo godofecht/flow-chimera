@@ -38,3 +38,8 @@ The remaining gaps are Ollama/Chroma-style **model-generated semantic embeddings
 ## Native Ollama progress (16 October 2026)
 
 A separately initialized semantic-memory subsystem (`src/ollama_provider.flow`, `src/semantic_memory.flow`, `src/ollama_memory.flow`) now handles full-dimensional Ollama /api/embed responses without the legacy 8D projection requirement, live loopback-only curl POST, exact-dimension cosine ranking, and persistent CSM1 records. The integration tests use `tests/mock_ollama.py`, not a production Ollama model. This moves embedding transport, bounded retrieval and snapshot retention to implemented subsets, but **does not** constitute complete Chroma vector-database parity, model quality validation, or full agent-prompt integration. See [docs/ollama-and-semantic-memory.md](docs/ollama-and-semantic-memory.md).
+
+
+## Local generation backend (16 October 2026)
+
+`src/ollama_agent.flow` plus `src/ollama_cli.flow` implement real loopback-only Ollama `/api/generate` HTTP calls with bounded JSON request/response, `stream:false`, required completion flag and restricted tool dispatch. This is an additional backend to the existing Gemini provider, tested against a deterministic local HTTP fixture. Production model-quality validation, native training and unrestricted external tool parity remain outstanding. See [docs/ollama-generation.md](docs/ollama-generation.md).
