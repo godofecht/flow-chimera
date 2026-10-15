@@ -1,0 +1,39 @@
+import "chimera.flow"
+import "tools.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+}
+
+function eq(a: string, b: string) -> bool {
+    return strcmp(a, b) == 0
+}
+
+function main() -> i32 {
+    if !chimera_init() { return 1 }
+    if !chimera_tools_init() { return 2 }
+    if !chimera_tool_register("web_search", "{}", 2) { return 3 }
+    if !chimera_tool_register("file_system", "{}", 1) { return 4 }
+    if chimera_tool_register("web_search", "{}", 2) { return 5 }
+    if chimera_tool_register("shell", "{}", 9) { return 6 }
+    if chimera_tool_count() != 2 { return 7 }
+    if chimera_tool_find("unknown").found { return 8 }
+    let web: HostTool = chimera_tool_find("web_search")
+    if !web.found or web.enabled or web.capability != 2 { return 9 }
+    if chimera_tool_complete("query", "web_search", "results", 0.5, 0.3, 0.4) { return 10 }
+    if chimera_steps() != 0 { return 11 }
+    if !chimera_tool_allow("web_search", true) { return 12 }
+    if !chimera_tool_complete("query", "web_search", "results", 0.5, 0.3, 0.4) { return 13 }
+    if chimera_steps() != 1 { return 14 }
+    if !eq(chimera_recall_at("query", 0).outcome, "results") { return 15 }
+    if chimera_tool_complete("query2", "file_system", "denied", 0.5, 0.3, 0.4) { return 16 }
+    if !chimera_tool_unregister("web_search") { return 17 }
+    if chimera_tool_count() != 1 { return 18 }
+    if !eq(chimera_tool_at(0).name, "file_system") { return 19 }
+    if chimera_tool_find("web_search").found { return 20 }
+    chimera_tools_shutdown()
+    if chimera_tool_count() != 0 { return 21 }
+    chimera_shutdown()
+    println("PASS: external host capability tool registry")
+    return 0
+}
