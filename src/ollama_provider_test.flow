@@ -8,7 +8,7 @@ extern {
 
 function main() -> i32 {
     if !chimera_ollama_url_valid("http://127.0.0.1:18764/api/embed") { return 1 }
-    if !chimera_ollama_url_valid("http://localhost:11434/api/embed") { return 2 }
+    if chimera_ollama_url_valid("http://localhost:11434/api/embed") { return 2 }
     if chimera_ollama_url_valid("http://localhost.evil.invalid:11434/api/embed") { return 3 }
     if chimera_ollama_url_valid("http://127.0.0.1:11434@evil.invalid/api/embed") { return 4 }
     if chimera_ollama_url_valid("http://127.0.0.1:0/api/embed") { return 5 }
