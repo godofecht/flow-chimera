@@ -9,11 +9,11 @@ A Flow-native port of the deterministic cognition/orchestration layer of [Projec
 [Flow 2.x](https://github.com/flooooooooooow/flow), Linux x86-64 or macOS arm64.
 
 ```bash
-flow run tests/chimera_test.flow
+flow run src/chimera_test.flow
 flow run src/demo.flow
 ```
 
-The library API lives in `src/chimera.flow`; import it with `import "src/chimera.flow"`. Explicit `chimera_init()` and `chimera_shutdown()` manage memory. Calls to `chimera_step` consume externally selected actions; they do not contact an LLM.
+The library API lives in `src/chimera.flow`; import it with `import "chimera.flow"` from another Flow module in `src/`. Explicit `chimera_init()` and `chimera_shutdown()` manage memory. Calls to `chimera_step` consume externally selected actions; they do not contact an LLM.
 
 See [PORTING.md](PORTING.md) for the upstream-to-Flow mapping and gaps.
 
