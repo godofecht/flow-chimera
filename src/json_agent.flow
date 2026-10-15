@@ -1,0 +1,12 @@
+import "chimera.flow"
+import "protocol.flow"
+
+# JSON-driven single turn. Matches Project Chimera's action envelope and
+# uses the same allowlisted dispatcher as the deterministic runtime.
+export function chimera_step_json(observation: string, response_json: string, confidence: f64, load: f64, focus: f64) -> ToolResult {
+    let selected: ParsedAction = chimera_parse_action(response_json)
+    if !selected.valid {
+        return ToolResult { success: false, should_exit: false, output: "invalid_action_json", number: 0 }
+    }
+    return chimera_step(observation, selected.tool_name, selected.payload, selected.a, selected.b, confidence, load, focus)
+}
