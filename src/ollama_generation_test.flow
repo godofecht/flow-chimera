@@ -1,0 +1,31 @@
+import "ollama_agent.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+    function strstr(text: string, needle: string) -> ptr<u8>
+}
+
+function main() -> i32 {
+    if !chimera_ollama_generate_url_valid("http://127.0.0.1:18764/api/generate") { return 1 }
+    if chimera_ollama_generate_url_valid("http://127.0.0.1:18764/api/embed") { return 2 }
+    if chimera_ollama_url_valid("http://127.0.0.1:18764/api/generate") { return 3 }
+    if chimera_ollama_generate_url_valid("http://127.0.0.1:18764/admin") { return 4 }
+    if chimera_ollama_generate_url_valid("http://127.0.0.1:18764@evil.invalid/api/generate") { return 5 }
+    let incomplete: string = chimera_ollama_generated_text("{\"done\":false,\"response\":\"hello\"}")
+    if strcmp(incomplete, "") != 0 { return 6 }
+    let complete: string = chimera_ollama_generated_text("{\"done\":true,\"response\":\"good\"}")
+    if strcmp(complete, "good") != 0 { return 7 }
+    let request: string = chimera_ollama_generate_request("qwen2.5:7b", "add 5 + 10")
+    if request == null { return 8 }
+    if strstr(request, "\"stream\":false") == null { return 9 }
+    chimera_ollama_free(request)
+    if !chimera_init() { return 10 }
+    let result: ToolResult = chimera_ollama_live_step("add five and ten", 0.7, 0.4, 0.8, true)
+    if !result.success or result.number != 15 { return 11 }
+    if chimera_steps() != 1 { return 12 }
+    if strcmp(chimera_recall_at("add five and ten", 0).action, "sum_numbers") != 0 { return 13 }
+    chimera_json_release()
+    chimera_shutdown()
+    println("PASS: Ollama local /api/generate to validated Flow agent action")
+    return 0
+}
