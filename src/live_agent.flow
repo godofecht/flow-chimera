@@ -1,0 +1,93 @@
+# End-to-end Prometheus -> Janus -> Narcissus turn.
+# Uses authenticated Gemini transport, validated model output and allowlisted
+# tools. Introspection is heuristic instrumentation, not a consciousness claim.
+import "chimera.flow"
+import "protocol.flow"
+import "provider.flow"
+import "json_agent.flow"
+
+extern {
+    function calloc(n: i64, size: i64) -> ptr<void>
+    function free(p: ptr<void>) -> void
+    function strlen(s: string) -> i64
+    function strncat(dst: ptr<u8>, src: string, count: i64) -> ptr<u8>
+}
+
+const PROMPT_CAP: i32 = 16000
+
+function prompt_add(dest: ptr<u8>, what: string) -> void {
+    if what == null { return }
+    let remaining: i32 = PROMPT_CAP - 1 - (strlen(dest as string) as i32)
+    if remaining <= 0 { return }
+    strncat(dest, what, remaining as i64)
+}
+
+export function chimera_make_prompt(observation: string, introspection: bool) -> string {
+    if observation == null { return null }
+    let result: ptr<u8> = calloc(PROMPT_CAP as i64, 1) as ptr<u8>
+    if result == null { return null }
+    prompt_add(result, "You are Project Chimera, an autonomous agent. Choose one allowed action. ")
+    prompt_add(result, "Reply ONLY with a JSON object having tool_name and arguments, no markdown. ")
+    prompt_add(result, "Tools: echo({text:string}), sum_numbers({a:integer,b:integer}), exit({}). ")
+    prompt_add(result, "Actions not listed will be denied. No shell/file/web tools are installed.\n")
+    prompt_add(result, "Recent context (chronological):\n")
+    let n: i32 = chimera_work_size()
+    let start: i32 = if n > 5 { n - 5 } else { 0 }
+    for i in start to n {
+        prompt_add(result, chimera_work_get(i))
+        prompt_add(result, "\n")
+    }
+    prompt_add(result, "Current observation:\n")
+    prompt_add(result, observation)
+    prompt_add(result, "\n")
+    let memory: Experience = chimera_recall_at(observation, 0)
+    if memory.observation != "" {
+        prompt_add(result, "Recalled experience:\n")
+        prompt_add(result, memory.observation)
+        prompt_add(result, "\nAction: ")
+        prompt_add(result, memory.action)
+        prompt_add(result, "\nOutcome: ")
+        prompt_add(result, memory.outcome)
+        prompt_add(result, "\n")
+    }
+    if introspection {
+        prompt_add(result, "Metacognitive monitoring (observations, not objective certainty):\n")
+        if chimera_repeated_decision() {
+            prompt_add(result, "Repeated recent choice; consider whether alternatives exist.\n")
+        }
+        if chimera_load_warning() {
+            prompt_add(result, "Recent processing loads have been high.\n")
+        }
+        if chimera_focus_deviated() {
+            prompt_add(result, "Recent focus differs from the tracked average.\n")
+        }
+    }
+    prompt_add(result, "Respond with exactly one allowed action JSON object.")
+    return result as string
+}
+
+export function chimera_live_step(observation: string, temperature: f64, confidence: f64, load: f64, focus: f64, introspection: bool) -> ToolResult {
+    let prompt: string = chimera_make_prompt(observation, introspection)
+    if prompt == null {
+        return ToolResult {success: false, should_exit: false, output: "prompt_allocation_failed", number: 0}
+    }
+    let request: string = chimera_gemini_request(prompt, temperature)
+    free(prompt as ptr<void>)
+    if request == null {
+        return ToolResult {success: false, should_exit: false, output: "request_encoding_failed", number: 0}
+    }
+    let answer: ProviderResult = chimera_gemini_post(request)
+    chimera_provider_free(request)
+    if !answer.success {
+        chimera_provider_free(answer.body)
+        return ToolResult {success: false, should_exit: false, output: "gemini_request_failed", number: answer.exit_status}
+    }
+    let generated: string = chimera_gemini_text(answer.body)
+    if generated == "" {
+        chimera_provider_free(answer.body)
+        return ToolResult {success: false, should_exit: false, output: "gemini_candidate_missing", number: 0}
+    }
+    let outcome: ToolResult = chimera_step_json(observation, generated, confidence, load, focus)
+    chimera_provider_free(answer.body)
+    return outcome
+}
