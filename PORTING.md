@@ -33,3 +33,8 @@ The upstream terms “consciousness” and “self-awareness” are labels for i
 ## Work remaining for complete parity
 
 The remaining gaps are Ollama/Chroma-style **model-generated semantic embeddings** (the current eight-dimensional vectors are caller-provided), user-scoped web/file/terminal tools with JSON Schema argument validation and actual sandboxed execution, DistilBERT/TRL-compatible preference training and model loading, local Hugging Face emotion inference, unrestricted configurable model selection, arbitrary-scope Narcissus attention/emotion history, application-level Knight Medicare integration and differential tests against upstream. The Flow-native linear preference ranker is **not** upstream model parity. The live Gemini transport is verified against a deterministic HTTP fixture, not Google production. No benchmark or general intelligence/consciousness result is claimed.
+
+
+## Native Ollama progress (16 October 2026)
+
+A separately initialized semantic-memory subsystem (`src/ollama_provider.flow`, `src/semantic_memory.flow`, `src/ollama_memory.flow`) now handles full-dimensional Ollama /api/embed responses without the legacy 8D projection requirement, live loopback-only curl POST, exact-dimension cosine ranking, and persistent CSM1 records. The integration tests use `tests/mock_ollama.py`, not a production Ollama model. This moves embedding transport, bounded retrieval and snapshot retention to implemented subsets, but **does not** constitute complete Chroma vector-database parity, model quality validation, or full agent-prompt integration. See [docs/ollama-and-semantic-memory.md](docs/ollama-and-semantic-memory.md).
