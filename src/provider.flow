@@ -224,9 +224,9 @@ export function chimera_gemini_request(prompt: string, temperature: f64) -> stri
             at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, c)
         } else {
             if c == 10 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\n") }
-            else if c == 13 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\r") }
-            else if c == 9 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\t") }
-            else if c < 32 {
+            elif c == 13 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\r") }
+            elif c == 9 { at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\t") }
+            elif c < 32 {
                 at = p_append(buffer, at, PROVIDER_MAX_REQUEST, "\\u00")
                 at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, hp[(c / 16) as i32])
                 at = p_append_byte(buffer, at, PROVIDER_MAX_REQUEST, hp[(c % 16) as i32])
