@@ -1,0 +1,277 @@
+# Strict JSON action decoder. No shell or code execution. Returned strings are
+# borrowed from a single bounded scratch arena, valid until the next decode.
+extern {
+    function calloc(n: i64, width: i64) -> ptr<void>
+    function free(p: ptr<void>) -> void
+    function strlen(s: string) -> i64
+    function strcmp(a: string, b: string) -> i32
+}
+
+const JSON_LIMIT: i32 = 32768
+const JSON_DEPTH: i32 = 32
+
+struct ParsedAction {
+    valid: bool,
+    tool_name: string,
+    payload: string,
+    a: i32,
+    b: i32
+}
+
+let mut j_source: ptr<u8> = null
+let mut j_size: i32 = 0
+let mut j_scratch: ptr<u8> = null
+let mut j_used: i32 = 0
+
+function j_space(c: u8) -> bool {
+    return c == 32 or c == 10 or c == 13 or c == 9
+}
+
+function j_ws(at: i32) -> i32 {
+    let mut p: i32 = at
+    while p < j_size and j_space(j_source[p]) { p = p + 1 }
+    return p
+}
+
+function j_digit(c: u8) -> bool {
+    return c >= 48 and c <= 57
+}
+
+function j_hex(c: u8) -> i32 {
+    if c >= 48 and c <= 57 { return (c - 48) as i32 }
+    if c >= 65 and c <= 70 { return ((c - 65) as i32) + 10 }
+    if c >= 97 and c <= 102 { return ((c - 97) as i32) + 10 }
+    return -1
+}
+
+# On failure returns -1. 'from' must be a double quote.
+function j_string_end(from: i32) -> i32 {
+    if from >= j_size or j_source[from] != 34 { return -1 }
+    let mut p: i32 = from + 1
+    while p < j_size {
+        let c: u8 = j_source[p]
+        if c == 34 { return p + 1 }
+        if c < 32 { return -1 }
+        if c == 92 {
+            p = p + 1
+            if p >= j_size { return -1 }
+            let e: u8 = j_source[p]
+            if e == 117 {
+                if p + 4 >= j_size { return -1 }
+                for k in 1 to 5 {
+                    if j_hex(j_source[p + k]) < 0 { return -1 }
+                }
+                p = p + 4
+            } else {
+                if e != 34 and e != 92 and e != 47 and e != 98 and e != 102 and e != 110 and e != 114 and e != 116 { return -1 }
+            }
+        }
+        p = p + 1
+    }
+    return -1
+}
+
+function j_number_end(at: i32) -> i32 {
+    let mut p: i32 = at
+    if p < j_size and j_source[p] == 45 { p = p + 1 }
+    if p >= j_size { return -1 }
+    if j_source[p] == 48 {
+        p = p + 1
+    } else {
+        if j_source[p] < 49 or j_source[p] > 57 { return -1 }
+        while p < j_size and j_digit(j_source[p]) { p = p + 1 }
+    }
+    if p < j_size and j_source[p] == 46 {
+        p = p + 1
+        if p >= j_size or !j_digit(j_source[p]) { return -1 }
+        while p < j_size and j_digit(j_source[p]) { p = p + 1 }
+    }
+    if p < j_size and (j_source[p] == 69 or j_source[p] == 101) {
+        p = p + 1
+        if p < j_size and (j_source[p] == 45 or j_source[p] == 43) { p = p + 1 }
+        if p >= j_size or !j_digit(j_source[p]) { return -1 }
+        while p < j_size and j_digit(j_source[p]) { p = p + 1 }
+    }
+    return p
+}
+
+function j_lit(at: i32, lit: string) -> i32 {
+    let n: i32 = strlen(lit) as i32
+    if at + n > j_size { return -1 }
+    let chars: ptr<u8> = lit as ptr<u8>
+    for i in 0 to n {
+        if chars[i] != j_source[at + i] { return -1 }
+    }
+    return at + n
+}
+
+# Recursive structural validation, nested objects/arrays, with bounded depth.
+function j_value(at: i32, depth: i32) -> i32 {
+    if depth >= JSON_DEPTH { return -1 }
+    let p: i32 = j_ws(at)
+    if p >= j_size { return -1 }
+    let c: u8 = j_source[p]
+    if c == 34 { return j_string_end(p) }
+    if c == 123 {
+        let mut q: i32 = j_ws(p + 1)
+        if q < j_size and j_source[q] == 125 { return q + 1 }
+        while q < j_size {
+            let end_key: i32 = j_string_end(q)
+            if end_key < 0 { return -1 }
+            q = j_ws(end_key)
+            if q >= j_size or j_source[q] != 58 { return -1 }
+            q = j_value(q + 1, depth + 1)
+            if q < 0 { return -1 }
+            q = j_ws(q)
+            if q >= j_size { return -1 }
+            if j_source[q] == 125 { return q + 1 }
+            if j_source[q] != 44 { return -1 }
+            q = j_ws(q + 1)
+        }
+        return -1
+    }
+    if c == 91 {
+        let mut q: i32 = j_ws(p + 1)
+        if q < j_size and j_source[q] == 93 { return q + 1 }
+        while q < j_size {
+            q = j_value(q, depth + 1)
+            if q < 0 { return -1 }
+            q = j_ws(q)
+            if q >= j_size { return -1 }
+            if j_source[q] == 93 { return q + 1 }
+            if j_source[q] != 44 { return -1 }
+            q = j_ws(q + 1)
+        }
+        return -1
+    }
+    if c == 116 { return j_lit(p, "true") }
+    if c == 102 { return j_lit(p, "false") }
+    if c == 110 { return j_lit(p, "null") }
+    return j_number_end(p)
+}
+
+function j_load(json: string) -> bool {
+    let n: i64 = strlen(json)
+    if n <= 0 or n >= JSON_LIMIT { return false }
+    j_source = json as ptr<u8>
+    j_size = n as i32
+    j_used = 0
+    if j_scratch == null { j_scratch = calloc(JSON_LIMIT as i64, 1) as ptr<u8> }
+    if j_scratch == null { return false }
+    let end: i32 = j_value(0, 0)
+    return end >= 0 and j_ws(end) == j_size
+}
+
+# Unescapes a validated JSON string to scratch. Supports ASCII \u00XX escapes;
+# other unicode escapes explicitly rejected rather than mangled.
+function j_decode(at: i32) -> string {
+    let end: i32 = j_string_end(at)
+    if end < 0 or j_used + end - at + 1 >= JSON_LIMIT { return null }
+    let start: i32 = j_used
+    let mut p: i32 = at + 1
+    while p < end - 1 {
+        let mut c: u8 = j_source[p]
+        if c == 92 {
+            p = p + 1
+            c = j_source[p]
+            if c == 110 { c = 10 }
+            if c == 114 { c = 13 }
+            if c == 116 { c = 9 }
+            if c == 98 { c = 8 }
+            if c == 102 { c = 12 }
+            if c == 117 {
+                if j_source[p + 1] != 48 or j_source[p + 2] != 48 { return null }
+                let first: i32 = j_hex(j_source[p + 3])
+                let second: i32 = j_hex(j_source[p + 4])
+                c = (first * 16 + second) as u8
+                if c == 0 { return null }
+                p = p + 4
+            }
+        }
+        j_scratch[j_used] = c
+        j_used = j_used + 1
+        p = p + 1
+    }
+    j_scratch[j_used] = 0
+    j_used = j_used + 1
+    return (j_scratch + start) as string
+}
+
+# Object lookup returns the start of the value or -1.
+function j_field(object_at: i32, field: string) -> i32 {
+    if object_at < 0 or object_at >= j_size or j_source[object_at] != 123 { return -1 }
+    let mut p: i32 = j_ws(object_at + 1)
+    while p < j_size and j_source[p] != 125 {
+        let decoded: string = j_decode(p)
+        if decoded == null { return -1 }
+        let end_key: i32 = j_string_end(p)
+        let value_at: i32 = j_ws(end_key + 1)
+        if value_at >= j_size or j_source[value_at - 1] != 58 {
+            # Allow whitespace between key and colon.
+            let colon: i32 = j_ws(end_key)
+            if colon >= j_size or j_source[colon] != 58 { return -1 }
+        }
+        let colon2: i32 = j_ws(end_key)
+        let v: i32 = j_ws(colon2 + 1)
+        if strcmp(decoded, field) == 0 { return v }
+        p = j_ws(j_value(v, 1))
+        if p < j_size and j_source[p] == 44 { p = j_ws(p + 1) }
+    }
+    return -1
+}
+
+function j_int(at: i32) -> i32 {
+    if at < 0 or at >= j_size { return 0 }
+    let mut p: i32 = at
+    let mut sign: i32 = 1
+    if j_source[p] == 45 { sign = -1; p = p + 1 }
+    let mut value: i32 = 0
+    while p < j_size and j_digit(j_source[p]) {
+        if value > 200000000 { return 0 }
+        value = value * 10 + ((j_source[p] - 48) as i32)
+        p = p + 1
+    }
+    return value * sign
+}
+
+export function chimera_parse_action(json: string) -> ParsedAction {
+    let invalid: ParsedAction = ParsedAction {valid: false, tool_name: "", payload: "", a: 0, b: 0}
+    if !j_load(json) or j_source[j_ws(0)] != 123 { return invalid }
+    let tool_at: i32 = j_field(j_ws(0), "tool_name")
+    let args_at: i32 = j_field(j_ws(0), "arguments")
+    if tool_at < 0 or args_at < 0 { return invalid }
+    if j_source[tool_at] != 34 or j_source[args_at] != 123 { return invalid }
+    let tool: string = j_decode(tool_at)
+    if tool == null or strcmp(tool, "") == 0 { return invalid }
+    let mut payload: string = ""
+    let mut text_at: i32 = j_field(args_at, "text")
+    if text_at < 0 { text_at = j_field(args_at, "query") }
+    if text_at < 0 { text_at = j_field(args_at, "path") }
+    if text_at < 0 { text_at = j_field(args_at, "message") }
+    if text_at >= 0 {
+        if j_source[text_at] != 34 { return invalid }
+        payload = j_decode(text_at)
+        if payload == null { return invalid }
+    }
+    let ap: i32 = j_field(args_at, "a")
+    let bp: i32 = j_field(args_at, "b")
+    let mut a: i32 = 0
+    let mut b: i32 = 0
+    if ap >= 0 {
+        if j_number_end(ap) <= ap { return invalid }
+        a = j_int(ap)
+    }
+    if bp >= 0 {
+        if j_number_end(bp) <= bp { return invalid }
+        b = j_int(bp)
+    }
+    return ParsedAction {valid: true, tool_name: tool, payload: payload, a: a, b: b}
+}
+
+export function chimera_json_release() -> void {
+    if j_scratch != null { free(j_scratch as ptr<void>) }
+    j_scratch = null
+    j_source = null
+    j_size = 0
+    j_used = 0
+}
