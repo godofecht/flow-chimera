@@ -1,4 +1,4 @@
-import "src/chimera.flow"
+import "chimera.flow"
 
 function main() -> i32 {
     if !chimera_init() {
