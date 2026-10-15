@@ -1,5 +1,6 @@
 import "ollama_provider.flow"
 import "chimera.flow"
+import "ollama_memory.flow"
 
 extern {
     function strcmp(a: string, b: string) -> i32
@@ -39,6 +40,18 @@ function main() -> i32 {
     let nearest: VectorMatch = chimera_recall_vector(&vector[0], 8, 0)
     if strcmp(nearest.observation, "cat") != 0 { return 22 }
     chimera_shutdown()
+    if !chimera_semantic_init() { return 23 }
+    if !chimera_ollama_remember("Cat", "observe", "meow") { return 24 }
+    if !chimera_ollama_remember("Dog", "observe", "bark") { return 25 }
+    let memory: SemanticMatch = chimera_ollama_recall_text("cat under the table", 0)
+    if !memory.found or strcmp(memory.observation, "Cat") != 0 { return 26 }
+    if memory.dimension != 8 or memory.similarity < 0.9 { return 27 }
+    let path: string = "/tmp/chimera_ollama_full_vector_snapshot.bin"
+    if !chimera_semantic_save(path) { return 28 }
+    chimera_semantic_clear()
+    if !chimera_semantic_load(path) { return 29 }
+    if strcmp(chimera_ollama_recall_text("dog", 0).observation, "Dog") != 0 { return 30 }
+    chimera_semantic_shutdown()
     chimera_json_release()
     println("PASS: real loopback HTTP Ollama JSON embedding and 8D episodic recall")
     return 0
