@@ -39,18 +39,44 @@ function p_bytes_equal(a: ptr<u8>, b: string, n: i32) -> bool {
     return true
 }
 
+# Insecure HTTP is permitted only for a literal loopback hostname.
+# Validate authority boundaries, prevent userinfo and require numeric ports.
+function p_loopback_authority(url: ptr<u8>, n: i32) -> bool {
+    if n < 16 { return false }
+    if !p_bytes_equal(url, "http://127.0.0.1", 16) and !p_bytes_equal(url, "http://localhost", 16) {
+        return false
+    }
+    if n == 16 { return true }
+    if url[16] == 47 or url[16] == 63 or url[16] == 35 { return true }
+    if url[16] != 58 { return false }
+    let mut at: i32 = 17
+    if at >= n { return false }
+    let mut port: i32 = 0
+    while at < n and url[at] != 47 and url[at] != 63 and url[at] != 35 {
+        let c: u8 = url[at]
+        if c < 48 or c > 57 { return false }
+        port = port * 10 + ((c - 48) as i32)
+        if port > 65535 { return false }
+        at = at + 1
+    }
+    return port > 0
+}
+
 function p_url_valid(url: string) -> bool {
+    if url == null { return false }
     let p: ptr<u8> = url as ptr<u8>
     let n: i32 = strlen(url) as i32
-    if n < 10 or n > 2048 { return false }
+    if n < 8 or n > 2048 { return false }
     let secure: bool = n >= 8 and p_bytes_equal(p, "https://", 8)
-    let local: bool = n >= 17 and p_bytes_equal(p, "http://127.0.0.1", 16)
-    let loopback: bool = n >= 17 and p_bytes_equal(p, "http://localhost", 16)
-    if !secure and !local and !loopback { return false }
+    if !secure and !p_loopback_authority(p, n) { return false }
     for i in 0 to n {
         if p[i] < 33 or p[i] > 126 { return false }
     }
     return true
+}
+
+export function chimera_provider_url_valid(url: string) -> bool {
+    return p_url_valid(url)
 }
 
 function p_key_valid(key: string) -> bool {
