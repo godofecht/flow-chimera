@@ -1,0 +1,20 @@
+name: Flow Chimera tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  flow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Flow compiler
+        uses: actions/checkout@v4
+        with:
+          repository: flooooooooooow/flow
+          path: flow-toolchain
+      - name: Build and test Flow Chimera
+        run: |
+          ./flow-toolchain/flow version
+          ./flow-toolchain/flow run tests/chimera_test.flow
+          ./flow-toolchain/flow run src/demo.flow
