@@ -6,17 +6,17 @@ Reference: [LarytheLord/Project-Chimera](https://github.com/LarytheLord/Project-
 |---|---|---|
 | `agent/memory.py` — WorkingMemory | `chimera_work_add/get/clear`, 20-entry chronological ring | Behavioural subset |
 | `agent/memory.py` — VectorEpisodicMemory | `chimera_remember_vector`, cosine-ranked `chimera_recall_vector`; lexical `chimera_recall_at`; versioned binary snapshots | Partial: 8D externally supplied vectors, 64-entry bounded memory, not Chroma/Ollama |
-| `agent/agent.py` — perceive/think/act loop | `chimera_step` and `chimera_record_external_step` | Partial: caller handles model generation/loop |
+| `agent/agent.py` — perceive/think/act loop | `chimera_step`, `chimera_step_json`, `chimera_live_step`, bounded `live_cli.flow` | Partial: model-driven session and action execution work for a fixed allowlist |
 | `agent/tool_user.py` — ToolRegistry | `src/tools.flow`: register, unregister, enumerate, allow/deny, record host-completed outcomes | Partial: schema metadata only, no JSON validation or network/filesystem/process execution |
 | `consciousness/narcissus_core.py` — SelfModelingEngine | `chimera_record_state`, `chimera_self_model`, confidence/focus/load/repetition metrics | Partial: 32 states, numeric trends only, no attention maps or arbitrary personal-pattern history |
 | `consciousness/narcissus_core.py` — simulation | `chimera_what_if` | Different: descriptive historical heuristic, **not** predictive sandbox simulation |
 | `consciousness/integration.py` | Monitoring toggles, reflection period, external outcome recording | Partial |
-| `rlhf/oracle.py` | `chimera_best_candidate` with supplied scores | Partial: caller provides scores |
-| `cognitive_core/prometheus_core.py` — Gemini HTTP | Host boundary only | Missing model HTTP provider, response parser and key management |
-| `rlhf/reward_model.py` — DistilBERT/TR L training | None | Missing tokenizer, inference, preference training and model serialization |
+| `rlhf/oracle.py` | `chimera_best_candidate`, `chimera_reward_argmax` | Partial: numerical candidate ranking; not wired to trained text model |
+| `cognitive_core/prometheus_core.py` — Gemini HTTP | `provider.flow` and `protocol.flow` with POSIX curl HTTP, secret header pipe, response parsing and request serialization | Functional integration tested against local HTTP fixture; real Gemini account not tested |
+| `rlhf/reward_model.py` — DistilBERT/TRL training | `reward.flow` pairwise online eight-feature linear ranker | Alternative ranker: numeric preference training verified, but no DistilBERT/tokenizer or save/load |
 | `consciousness/emotion.py` / `emotion/detector.py` | None | Missing external emotion classifiers |
-| `consciousness/conscious_agent.py` | Core state recording, reflection control, host-bound action execution | Partial, no model inference |
-| Knight Medicare integration / CLI | None | Missing application adapter / interactive CLI |
+| `consciousness/conscious_agent.py` | Core state/reflection plus `live_agent.flow` prompt orchestration and remote model generation | Partial: numeric self-monitoring and allowlisted action loop; not full Python semantics |
+| Knight Medicare integration / CLI | Bounded environment-configured session entrypoint `live_cli.flow` | CLI partial; Knight Medicare bridge missing |
 
 ## Snapshot contract
 
@@ -32,4 +32,4 @@ The upstream terms “consciousness” and “self-awareness” are labels for i
 
 ## Work remaining for complete parity
 
-Native or external Gemini-compatible response generation with credential and bounded-JSON handling; durable vector search with model-based embeddings and variable embedding dimensions; real user-controlled web/file/terminal tools with schemas and sandboxed execution; reward training/inference and emotion classification; actual application-level agent loops, structured prompts and end-to-end compatibility fixtures; CLI and consumer integration. These are currently **missing**, rather than stubbed as successful implementations.
+The remaining gaps are Ollama/Chroma-style **model-generated semantic embeddings** (the current eight-dimensional vectors are caller-provided), user-scoped web/file/terminal tools with JSON Schema argument validation and actual sandboxed execution, DistilBERT/TRL-compatible preference training and model loading, local Hugging Face emotion inference, unrestricted configurable model selection, arbitrary-scope Narcissus attention/emotion history, application-level Knight Medicare integration and differential tests against upstream. The Flow-native linear preference ranker is **not** upstream model parity. The live Gemini transport is verified against a deterministic HTTP fixture, not Google production. No benchmark or general intelligence/consciousness result is claimed.
