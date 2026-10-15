@@ -2,6 +2,7 @@ import "chimera.flow"
 
 extern {
     function strcmp(a: string, b: string) -> i32
+    function remove(path: string) -> i32
 }
 
 function equal(a: string, b: string) -> bool {
@@ -58,13 +59,38 @@ function test_reflection() -> i32 {
     return 0
 }
 
+function test_snapshot() -> i32 {
+    let mut e: array<f64, 8> = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    if !chimera_remember_vector("persisted cat", "watch", "purr", &e[0], 8) { return 1 }
+    if !chimera_work_add("persisted work") { return 2 }
+    let path: string = "/tmp/flow_chimera_snapshot_regression.bin"
+    if !chimera_snapshot_save(path) { return 3 }
+    if chimera_snapshot_load("/tmp/chimera_no_such_snapshot_file_19982") { return 4 }
+    if chimera_episode_size() != 1 { return 5 }
+    chimera_shutdown()
+    if !chimera_init() { return 6 }
+    if chimera_episode_size() != 0 or chimera_steps() != 0 { return 7 }
+    if !chimera_snapshot_load(path) { return 8 }
+    if chimera_episode_size() != 1 { return 9 }
+    if chimera_steps() != 2 { return 10 }
+    if chimera_state_size() != 2 { return 11 }
+    if !equal(chimera_work_get(chimera_work_size() - 1), "persisted work") { return 12 }
+    let recalled: VectorMatch = chimera_recall_vector(&e[0], 8, 0)
+    if !equal(recalled.observation, "persisted cat") or recalled.similarity < 0.999 { return 13 }
+    if !chimera_reflection_due() { return 14 }
+    let _deleted: i32 = remove(path)
+    return 0
+}
+
 function main() -> i32 {
     if !chimera_init() { return 1 }
     let v: i32 = test_vector_memory()
     if v != 0 { print("vector failed: "); println(v); return 10 + v }
     let r: i32 = test_reflection()
     if r != 0 { print("reflection failed: "); println(r); return 50 + r }
+    let p: i32 = test_snapshot()
+    if p != 0 { print("snapshot failed: "); println(p); return 100 + p }
     chimera_shutdown()
-    println("PASS: semantic retrieval and reflection contract")
+    println("PASS: semantic retrieval, snapshot persistence and reflection contract")
     return 0
 }
