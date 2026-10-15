@@ -1,0 +1,25 @@
+import "reward.flow"
+
+function main() -> i32 {
+    let mut net: PreferenceModel = chimera_reward_init()
+    let mut chosen: array<f64, 8> = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut rejected: array<f64, 8> = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    if chimera_reward_probability(0.0) != 0.5 { return 1 }
+    if chimera_reward_argmax(net, &chosen[0], 0, 8) != -1 { return 2 }
+    for i in 0 to 100 {
+        net = chimera_reward_train_pair(net, &chosen[0], &rejected[0], 8, 0.2)
+    }
+    if net.updates != 100 or !net.trained { return 3 }
+    if chimera_reward_score(net, &chosen[0], 8) <= chimera_reward_score(net, &rejected[0], 8) { return 4 }
+    let mut samples: array<f64, 16> = [
+        0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    ]
+    if chimera_reward_argmax(net, &samples[0], 2, 8) != 1 { return 5 }
+    let old: PreferenceModel = chimera_reward_train_pair(net, &chosen[0], &rejected[0], 7, 0.2)
+    if old.updates != net.updates { return 6 }
+    if chimera_reward_probability(1000.0) < 0.999 { return 7 }
+    if chimera_reward_probability(-1000.0) > 0.001 { return 8 }
+    println("PASS: Flow-native pairwise preference trainer and ranker")
+    return 0
+}
