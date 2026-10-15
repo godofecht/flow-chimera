@@ -1,0 +1,186 @@
+# POSIX Gemini/compatible HTTP transport. Requires curl executable.
+# API secrets travel via an inherited header-only pipe, never via argv.
+# No shell evaluation; fork+execvp invokes a fixed executable and allowlisted options.
+# The caller owns ProviderResult.body and must free it with chimera_provider_free.
+
+extern {
+    function calloc(n: i64, width: i64) -> ptr<void>
+    function free(p: ptr<void>) -> void
+    function getenv(name: string) -> string
+    function strlen(s: string) -> i64
+    function pipe(fds: ptr<i32>) -> i32
+    function fork() -> i32
+    function dup2(from: i32, to: i32) -> i32
+    function close(fd: i32) -> i32
+    function execvp(file: string, argv: ptr<string>) -> i32
+    function _exit(status: i32) -> void
+    function write(fd: i32, buf: ptr<u8>, count: i64) -> i64
+    function read(fd: i32, buf: ptr<u8>, count: i64) -> i64
+    function waitpid(pid: i32, status: ptr<i32>, options: i32) -> i32
+}
+
+const PROVIDER_MAX_BODY: i32 = 131072
+const PROVIDER_MAX_REQUEST: i32 = 32768
+const PROVIDER_MAX_HEADER: i32 = 4096
+const DEFAULT_API: string = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+
+struct ProviderResult {
+    success: bool,
+    body: string,
+    byte_count: i32,
+    exit_status: i32
+}
+
+function p_bytes_equal(a: ptr<u8>, b: string, n: i32) -> bool {
+    let bp: ptr<u8> = b as ptr<u8>
+    for i in 0 to n {
+        if a[i] != bp[i] { return false }
+    }
+    return true
+}
+
+function p_url_valid(url: string) -> bool {
+    let p: ptr<u8> = url as ptr<u8>
+    let n: i32 = strlen(url) as i32
+    if n < 10 or n > 2048 { return false }
+    let secure: bool = n >= 8 and p_bytes_equal(p, "https://", 8)
+    let local: bool = n >= 17 and p_bytes_equal(p, "http://127.0.0.1", 16)
+    let loopback: bool = n >= 17 and p_bytes_equal(p, "http://localhost", 16)
+    if !secure and !local and !loopback { return false }
+    for i in 0 to n {
+        if p[i] < 33 or p[i] > 126 { return false }
+    }
+    return true
+}
+
+function p_key_valid(key: string) -> bool {
+    if key == null { return false }
+    let n: i32 = strlen(key) as i32
+    if n <= 0 or n > 2048 { return false }
+    let p: ptr<u8> = key as ptr<u8>
+    for i in 0 to n {
+        if p[i] < 33 or p[i] > 126 { return false }
+    }
+    return true
+}
+
+function p_write_all(fd: i32, bytes: ptr<u8>, length: i32) -> bool {
+    let mut pos: i32 = 0
+    while pos < length {
+        let n: i64 = write(fd, bytes + pos, (length - pos) as i64)
+        if n <= 0 { return false }
+        pos = pos + (n as i32)
+    }
+    return true
+}
+
+function p_fail() -> ProviderResult {
+    return ProviderResult {success: false, body: "", byte_count: 0, exit_status: -1}
+}
+
+export function chimera_provider_free(body: string) -> void {
+    if body != null { free(body as ptr<void>) }
+}
+
+# Response is raw JSON. Extract a candidate text through the protocol module.
+export function chimera_gemini_post(body: string) -> ProviderResult {
+    let request_size: i64 = strlen(body)
+    if request_size <= 0 or request_size >= PROVIDER_MAX_REQUEST as i64 { return p_fail() }
+    let key: string = getenv("CHIMERA_LLM_API_KEY")
+    if !p_key_valid(key) { return p_fail() }
+    let mut url: string = getenv("CHIMERA_LLM_API_URL")
+    if url == null { url = DEFAULT_API }
+    if !p_url_valid(url) { return p_fail() }
+
+    let mut stdin_pipe: array<i32, 2> = [-1, -1]
+    let mut header_pipe: array<i32, 2> = [-1, -1]
+    let mut stdout_pipe: array<i32, 2> = [-1, -1]
+
+    if pipe(&stdin_pipe[0]) != 0 { return p_fail() }
+    if pipe(&header_pipe[0]) != 0 {
+        close(stdin_pipe[0]); close(stdin_pipe[1])
+        return p_fail()
+    }
+    if pipe(&stdout_pipe[0]) != 0 {
+        close(stdin_pipe[0]); close(stdin_pipe[1])
+        close(header_pipe[0]); close(header_pipe[1])
+        return p_fail()
+    }
+
+    let pid: i32 = fork()
+    if pid == 0 {
+        # Descriptor 9 holds the key, without exposing it in process arguments.
+        if dup2(stdin_pipe[0], 0) < 0 or dup2(stdout_pipe[1], 1) < 0 or dup2(header_pipe[0], 9) < 0 {
+            _exit(126)
+        }
+        close(stdin_pipe[0]); close(stdin_pipe[1])
+        close(header_pipe[0]); close(header_pipe[1])
+        close(stdout_pipe[0]); close(stdout_pipe[1])
+
+        let mut args: array<string, 21> = [
+            "curl", "--silent", "--show-error", "--fail-with-body",
+            "--proto", "=http,https",
+            "--connect-timeout", "10", "--max-time", "60",
+            "--request", "POST",
+            "--header", "Content-Type: application/json",
+            "--header", "@/dev/fd/9",
+            "--data-binary", "@-",
+            "--", url, null
+        ]
+        execvp("curl", &args[0])
+        _exit(127)
+    }
+    close(stdin_pipe[0])
+    close(stdout_pipe[1])
+    close(header_pipe[0])
+    if pid < 0 {
+        close(stdin_pipe[1]); close(header_pipe[1]); close(stdout_pipe[0])
+        return p_fail()
+    }
+
+    let prefix: string = "x-goog-api-key: "
+    let plen: i32 = strlen(prefix) as i32
+    let kn: i32 = strlen(key) as i32
+    let header: ptr<u8> = calloc((plen + kn + 2) as i64, 1) as ptr<u8>
+    let mut headers_ok: bool = false
+    if header != null {
+        let pre: ptr<u8> = prefix as ptr<u8>
+        let kp: ptr<u8> = key as ptr<u8>
+        for i in 0 to plen { header[i] = pre[i] }
+        for i in 0 to kn { header[plen + i] = kp[i] }
+        header[plen + kn] = 10
+        headers_ok = p_write_all(header_pipe[1], header, plen + kn + 1)
+        free(header as ptr<void>)
+    }
+    close(header_pipe[1])
+    let body_ok: bool = p_write_all(stdin_pipe[1], body as ptr<u8>, request_size as i32)
+    close(stdin_pipe[1])
+
+    let output: ptr<u8> = calloc((PROVIDER_MAX_BODY + 1) as i64, 1) as ptr<u8>
+    let mut count: i32 = 0
+    let mut too_long: bool = output == null
+    let mut scratch: array<u8, 4096> = []
+    let mut reading: bool = true
+    while reading {
+        let n: i64 = read(stdout_pipe[0], &scratch[0], 4096)
+        if n <= 0 {
+            reading = false
+        } else {
+            if count + (n as i32) > PROVIDER_MAX_BODY {
+                too_long = true
+            } else {
+                if !too_long {
+                    for i in 0 to n as i32 { output[count + i] = scratch[i] }
+                    count = count + (n as i32)
+                }
+            }
+        }
+    }
+    close(stdout_pipe[0])
+    let mut status: i32 = 0
+    let waited: i32 = waitpid(pid, &status, 0)
+    let ok: bool = headers_ok and body_ok and !too_long and waited == pid and status == 0
+    if output == null { return p_fail() }
+    output[count] = 0
+    return ProviderResult {success: ok, body: output as string, byte_count: count, exit_status: status}
+}
