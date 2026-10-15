@@ -1,0 +1,254 @@
+# Flow-native adapter to Ollama POST /api/embed, with a fixed loopback-only
+# network boundary. Requires POSIX fork/exec, curl, and a running Ollama server.
+# No shell execution and no externally supplied arbitrary URL.
+import "protocol.flow"
+
+extern {
+    function calloc(n: i64, size: i64) -> ptr<void>
+    function free(memory: ptr<void>) -> void
+    function getenv(name: string) -> string
+    function strlen(value: string) -> i64
+    function strcmp(a: string, b: string) -> i32
+    function pipe(fds: ptr<i32>) -> i32
+    function fork() -> i32
+    function dup2(from: i32, target: i32) -> i32
+    function close(fd: i32) -> i32
+    function execvp(file: string, argv: ptr<string>) -> i32
+    function _exit(status: i32) -> void
+    function write(fd: i32, data: ptr<u8>, length: i64) -> i64
+    function read(fd: i32, data: ptr<u8>, length: i64) -> i64
+    function waitpid(pid: i32, status: ptr<i32>, options: i32) -> i32
+}
+
+const OLLAMA_BODY_CAP: i32 = 131072
+const OLLAMA_REQUEST_CAP: i32 = 16384
+const OLLAMA_DEFAULT_URL: string = "http://127.0.0.1:11434/api/embed"
+const OLLAMA_DEFAULT_MODEL: string = "qwen3-embedding:0.6b"
+
+struct OllamaHttpResult {
+    success: bool,
+    body: string,
+    bytes: i32,
+    exit_status: i32
+}
+
+function ollama_http_fail() -> OllamaHttpResult {
+    return OllamaHttpResult {success: false, body: "", bytes: 0, exit_status: -1}
+}
+
+# Require a *literal* loopback hostname with a numeric port and exact endpoint.
+# No userinfo, alternate paths, fragments, redirects or proxy protocols.
+export function chimera_ollama_url_valid(url: string) -> bool {
+    if url == null { return false }
+    let n: i32 = strlen(url) as i32
+    let prefix_a: string = "http://127.0.0.1:"
+    let prefix_b: string = "http://localhost:"
+    let p: ptr<u8> = url as ptr<u8>
+    let a: ptr<u8> = prefix_a as ptr<u8>
+    let b: ptr<u8> = prefix_b as ptr<u8>
+    if n < 29 or n > 96 { return false }
+    let mut host_ok: bool = true
+    for i in 0 to 17 {
+        if p[i] != a[i] and p[i] != b[i] { host_ok = false }
+    }
+    if !host_ok { return false }
+    # The entire prefix must be A or B; mixing characters isn't allowed.
+    let mut is_a: bool = true
+    let mut is_b: bool = true
+    for i in 0 to 17 {
+        if p[i] != a[i] { is_a = false }
+        if p[i] != b[i] { is_b = false }
+    }
+    if !is_a and !is_b { return false }
+    let mut port: i32 = 0
+    let mut at: i32 = 17
+    let mut digits: i32 = 0
+    while at < n and p[at] >= 48 and p[at] <= 57 {
+        digits = digits + 1
+        if digits > 5 { return false }
+        port = port * 10 + ((p[at] - 48) as i32)
+        at = at + 1
+    }
+    if digits == 0 or port < 1 or port > 65535 { return false }
+    let route: string = "/api/embed"
+    let end: ptr<u8> = route as ptr<u8>
+    if n - at != 10 { return false }
+    for i in 0 to 10 {
+        if p[at + i] != end[i] { return false }
+    }
+    return true
+}
+
+# Only installed model names; no whitespace, slash, flags, or control bytes.
+export function chimera_ollama_model_valid(model: string) -> bool {
+    if model == null { return false }
+    let n: i32 = strlen(model) as i32
+    if n < 1 or n > 128 { return false }
+    let p: ptr<u8> = model as ptr<u8>
+    for i in 0 to n {
+        let c: u8 = p[i]
+        if !((c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 45 or c == 46 or c == 95 or c == 58) {
+            return false
+        }
+    }
+    return true
+}
+
+function o_append(dst: ptr<u8>, at: i32, text: string) -> i32 {
+    let n: i32 = strlen(text) as i32
+    if at + n >= OLLAMA_REQUEST_CAP { return -1 }
+    let p: ptr<u8> = text as ptr<u8>
+    for i in 0 to n { dst[at + i] = p[i] }
+    return at + n
+}
+
+function o_append_byte(dst: ptr<u8>, at: i32, byte: u8) -> i32 {
+    if at + 1 >= OLLAMA_REQUEST_CAP { return -1 }
+    dst[at] = byte
+    return at + 1
+}
+
+function o_append_quoted(dst: ptr<u8>, at: i32, input: string) -> i32 {
+    let mut pos: i32 = o_append_byte(dst, at, 34)
+    if pos < 0 { return -1 }
+    let n: i32 = strlen(input) as i32
+    let bytes: ptr<u8> = input as ptr<u8>
+    let hex: ptr<u8> = "0123456789abcdef" as ptr<u8>
+    for i in 0 to n {
+        let c: u8 = bytes[i]
+        if c == 34 or c == 92 {
+            pos = o_append_byte(dst, pos, 92)
+            if pos >= 0 { pos = o_append_byte(dst, pos, c) }
+        } elif c == 10 { pos = o_append(dst, pos, "\n") }
+        elif c == 13 { pos = o_append(dst, pos, "\r") }
+        elif c == 9 { pos = o_append(dst, pos, "\t") }
+        elif c < 32 {
+            pos = o_append(dst, pos, "\u00")
+            if pos >= 0 { pos = o_append_byte(dst, pos, hex[(c / 16) as i32]) }
+            if pos >= 0 { pos = o_append_byte(dst, pos, hex[(c % 16) as i32]) }
+        } else { pos = o_append_byte(dst, pos, c) }
+        if pos < 0 { return -1 }
+    }
+    return o_append_byte(dst, pos, 34)
+}
+
+# Returns caller-owned JSON or null. Free with chimera_ollama_free().
+export function chimera_ollama_request(model: string, input: string) -> string {
+    if !chimera_ollama_model_valid(model) or input == null { return null }
+    if strlen(input) < 1 or strlen(input) > 8192 { return null }
+    let buffer: ptr<u8> = calloc(OLLAMA_REQUEST_CAP as i64, 1) as ptr<u8>
+    if buffer == null { return null }
+    let mut pos: i32 = o_append(buffer, 0, "{\"model\":")
+    if pos >= 0 { pos = o_append_quoted(buffer, pos, model) }
+    if pos >= 0 { pos = o_append(buffer, pos, ",\"input\":") }
+    if pos >= 0 { pos = o_append_quoted(buffer, pos, input) }
+    if pos >= 0 { pos = o_append(buffer, pos, "}") }
+    if pos < 0 { free(buffer as ptr<void>); return null }
+    buffer[pos] = 0
+    return buffer as string
+}
+
+export function chimera_ollama_free(owned: string) -> void {
+    if owned != null { free(owned as ptr<void>) }
+}
+
+function o_write_all(fd: i32, content: string) -> bool {
+    let n: i32 = strlen(content) as i32
+    let src: ptr<u8> = content as ptr<u8>
+    let mut at: i32 = 0
+    while at < n {
+        let written: i64 = write(fd, src + at, (n - at) as i64)
+        if written <= 0 { return false }
+        at = at + (written as i32)
+    }
+    return true
+}
+
+# POST only to validated loopback /api/embed. Content and response are bounded.
+# The caller must free a nonempty response body regardless of success.
+export function chimera_ollama_post(body: string) -> OllamaHttpResult {
+    let size: i64 = strlen(body)
+    if size <= 0 or size >= OLLAMA_REQUEST_CAP as i64 { return ollama_http_fail() }
+    let mut url: string = getenv("CHIMERA_OLLAMA_URL")
+    if url == null { url = OLLAMA_DEFAULT_URL }
+    if !chimera_ollama_url_valid(url) { return ollama_http_fail() }
+
+    let mut request_pipe: array<i32, 2> = [-1, -1]
+    let mut response_pipe: array<i32, 2> = [-1, -1]
+    if pipe(&request_pipe[0]) != 0 { return ollama_http_fail() }
+    if pipe(&response_pipe[0]) != 0 {
+        close(request_pipe[0])
+        close(request_pipe[1])
+        return ollama_http_fail()
+    }
+    let pid: i32 = fork()
+    if pid == 0 {
+        if dup2(request_pipe[0], 0) < 0 or dup2(response_pipe[1], 1) < 0 { _exit(126) }
+        close(request_pipe[0]); close(request_pipe[1])
+        close(response_pipe[0]); close(response_pipe[1])
+        let mut argv: array<string, 19> = [
+            "curl", "--silent", "--show-error", "--fail-with-body",
+            "--proto", "=http", "--noproxy", "*",
+            "--connect-timeout", "3", "--max-time", "30",
+            "--request", "POST", "--header", "Content-Type: application/json",
+            "--data-binary", "@-", "--", url, null
+        ]
+        execvp("curl", &argv[0])
+        _exit(127)
+    }
+    close(request_pipe[0]); close(response_pipe[1])
+    if pid < 0 {
+        close(request_pipe[1]); close(response_pipe[0])
+        return ollama_http_fail()
+    }
+    let sent: bool = o_write_all(request_pipe[1], body)
+    close(request_pipe[1])
+    let output: ptr<u8> = calloc((OLLAMA_BODY_CAP + 1) as i64, 1) as ptr<u8>
+    let mut bytes: i32 = 0
+    let mut overflow: bool = output == null
+    let mut scratch: array<u8, 4096> = []
+    let mut reading: bool = true
+    while reading {
+        let got: i64 = read(response_pipe[0], &scratch[0], 4096)
+        if got <= 0 {
+            reading = false
+        } else {
+            if bytes + (got as i32) > OLLAMA_BODY_CAP { overflow = true }
+            if !overflow {
+                for i in 0 to got as i32 { output[bytes + i] = scratch[i] }
+                bytes = bytes + (got as i32)
+            }
+        }
+    }
+    close(response_pipe[0])
+    let mut status: i32 = 0
+    let waited: i32 = waitpid(pid, &status, 0)
+    if output == null { return ollama_http_fail() }
+    output[bytes] = 0
+    return OllamaHttpResult {
+        success: sent and !overflow and waited == pid and status == 0 and bytes > 0,
+        body: output as string,
+        bytes: bytes,
+        exit_status: status
+    }
+}
+
+# One real local model inference request. Caller supplies a full-size buffer.
+# The response decoder commits to 'output' only upon full validation.
+export function chimera_ollama_embed(input: string, output: ptr<f64>, capacity: i32) -> OllamaEmbeddingDecode {
+    let fail: OllamaEmbeddingDecode = OllamaEmbeddingDecode {ok: false, dimensions: 0}
+    if output == null or capacity < 1 or capacity > 4096 { return fail }
+    let mut model: string = getenv("CHIMERA_OLLAMA_EMBED_MODEL")
+    if model == null { model = OLLAMA_DEFAULT_MODEL }
+    let request: string = chimera_ollama_request(model, input)
+    if request == null { return fail }
+    let response: OllamaHttpResult = chimera_ollama_post(request)
+    chimera_ollama_free(request)
+    if !response.success {
+        chimera_ollama_free(response.body)
+        return fail
+    }
+    let decoded: OllamaEmbeddingDecode = chimera_ollama_embedding_decode(response.body, output, capacity)
+    chimera_ollama_free(response.body)
+    return decoded
+}
