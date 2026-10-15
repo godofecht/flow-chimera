@@ -46,7 +46,7 @@ export function chimera_ollama_url_valid(url: string) -> bool {
     let p: ptr<u8> = url as ptr<u8>
     let a: ptr<u8> = prefix_a as ptr<u8>
     let b: ptr<u8> = prefix_b as ptr<u8>
-    if n < 29 or n > 96 { return false }
+    if n < 28 or n > 96 { return false }
     let mut host_ok: bool = true
     for i in 0 to 17 {
         if p[i] != a[i] and p[i] != b[i] { host_ok = false }
@@ -119,11 +119,11 @@ function o_append_quoted(dst: ptr<u8>, at: i32, input: string) -> i32 {
         if c == 34 or c == 92 {
             pos = o_append_byte(dst, pos, 92)
             if pos >= 0 { pos = o_append_byte(dst, pos, c) }
-        } elif c == 10 { pos = o_append(dst, pos, "\n") }
-        elif c == 13 { pos = o_append(dst, pos, "\r") }
-        elif c == 9 { pos = o_append(dst, pos, "\t") }
+        } elif c == 10 { pos = o_append(dst, pos, "\\n") }
+        elif c == 13 { pos = o_append(dst, pos, "\\r") }
+        elif c == 9 { pos = o_append(dst, pos, "\\t") }
         elif c < 32 {
-            pos = o_append(dst, pos, "\u00")
+            pos = o_append(dst, pos, "\\u00")
             if pos >= 0 { pos = o_append_byte(dst, pos, hex[(c / 16) as i32]) }
             if pos >= 0 { pos = o_append_byte(dst, pos, hex[(c % 16) as i32]) }
         } else { pos = o_append_byte(dst, pos, c) }
@@ -186,7 +186,7 @@ export function chimera_ollama_post(body: string) -> OllamaHttpResult {
         if dup2(request_pipe[0], 0) < 0 or dup2(response_pipe[1], 1) < 0 { _exit(126) }
         close(request_pipe[0]); close(request_pipe[1])
         close(response_pipe[0]); close(response_pipe[1])
-        let mut argv: array<string, 19> = [
+        let mut argv: array<string, 21> = [
             "curl", "--silent", "--show-error", "--fail-with-body",
             "--proto", "=http", "--noproxy", "*",
             "--connect-timeout", "3", "--max-time", "30",
