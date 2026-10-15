@@ -32,7 +32,8 @@ export function chimera_make_prompt(observation: string, introspection: bool) ->
     prompt_add(result, "Actions not listed will be denied. No shell/file/web tools are installed.\n")
     prompt_add(result, "Recent context (chronological):\n")
     let n: i32 = chimera_work_size()
-    let start: i32 = if n > 5 { n - 5 } else { 0 }
+    let mut start: i32 = 0
+    if n > 5 { start = n - 5 }
     for i in start to n {
         prompt_add(result, chimera_work_get(i))
         prompt_add(result, "\n")
@@ -41,7 +42,7 @@ export function chimera_make_prompt(observation: string, introspection: bool) ->
     prompt_add(result, observation)
     prompt_add(result, "\n")
     let memory: Experience = chimera_recall_at(observation, 0)
-    if memory.observation != "" {
+    if strlen(memory.observation) > 0 {
         prompt_add(result, "Recalled experience:\n")
         prompt_add(result, memory.observation)
         prompt_add(result, "\nAction: ")
@@ -83,7 +84,7 @@ export function chimera_live_step(observation: string, temperature: f64, confide
         return ToolResult {success: false, should_exit: false, output: "gemini_request_failed", number: answer.exit_status}
     }
     let generated: string = chimera_gemini_text(answer.body)
-    if generated == "" {
+    if strlen(generated) == 0 {
         chimera_provider_free(answer.body)
         return ToolResult {success: false, should_exit: false, output: "gemini_candidate_missing", number: 0}
     }
