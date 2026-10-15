@@ -60,3 +60,7 @@ Attribution: [LarytheLord / Project-Chimera](https://github.com/LarytheLord/Proj
 ## Native Ollama semantic-memory integration
 
 The [Ollama semantic-memory adapter](docs/ollama-and-semantic-memory.md) provides real local /api/embed POST requests, validated 1–4096D vectors, a bounded full-dimensional cosine index, transactional CSM1 snapshot loading, and a runnable example in `src/ollama_demo.flow`. It requires a running Ollama server and installed embedding model; CI exercises the transport with a deterministic local HTTP fixture. This independent memory store is **not yet wired into the Gemini agent prompt loop** and is not a replacement for Chroma/ANN search.
+
+## Local language-model generation
+
+An independent [Ollama /api/generate backend](docs/ollama-generation.md) now provides an **opt-in** local alternative to Gemini, including bounded JSON model responses, safe action dispatch, and a runnable `src/ollama_cli.flow`. Inference requires a separately installed and running local model. Tests exercise its HTTP interface with a local fixture, not the actual weights. Arbitrary tool execution, full RLHF integration and embedding retrieval inside agent prompts are still missing.

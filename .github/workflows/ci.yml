@@ -44,12 +44,16 @@ jobs:
         env:
           CHIMERA_OLLAMA_URL: http://127.0.0.1:18764/api/embed
           CHIMERA_OLLAMA_EMBED_MODEL: qwen3-embedding:0.6b
+          CHIMERA_OLLAMA_GENERATE_URL: http://127.0.0.1:18764/api/generate
+          CHIMERA_OLLAMA_GENERATE_MODEL: qwen2.5:7b
         run: |
           python3 tests/mock_ollama.py &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           curl --silent --show-error --fail --retry 8 --retry-delay 1 --retry-connrefused http://127.0.0.1:18764/health
           ./flow-toolchain/flow run src/ollama_provider_test.flow
+          ./flow-toolchain/flow run src/ollama_generation_test.flow
+          CHIMERA_TASK="add five and ten" CHIMERA_MAX_STEPS=1 ./flow-toolchain/flow run src/ollama_cli.flow
           CHIMERA_SEMANTIC_DB=/tmp/chimera_ollama_demo_snapshot.bin ./flow-toolchain/flow run src/ollama_demo.flow
           test -s /tmp/chimera_ollama_demo_snapshot.bin
           rm -f /tmp/chimera_ollama_demo_snapshot.bin
