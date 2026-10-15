@@ -34,6 +34,12 @@ function main() -> i32 {
     if !emoji.valid or !eq(emoji.payload, "😀") { return 14 }
     if chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"\\uD83D\"}}").valid { return 15 }
     if chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"\\uDE00\"}}").valid { return 16 }
+    if chimera_parse_action("{\"tool_name\":\"sum_numbers\",\"arguments\":{\"a\":5.9,\"b\":10}}").valid { return 17 }
+    if chimera_parse_action("{\"tool_name\":\"sum_numbers\",\"arguments\":{\"a\":1e2,\"b\":10}}").valid { return 18 }
+    if chimera_parse_action("{\"tool_name\":\"sum_numbers\",\"arguments\":{\"a\":2147483648,\"b\":0}}").valid { return 19 }
+    if chimera_parse_action("{\"tool_name\":\"sum_numbers\",\"arguments\":{\"a\":-2147483649,\"b\":0}}").valid { return 20 }
+    let negative: ParsedAction = chimera_parse_action("{\"tool_name\":\"sum_numbers\",\"arguments\":{\"a\":-2147483648,\"b\":10}}")
+    if !negative.valid or negative.a != -2147483648 { return 21 }
     chimera_json_release()
     chimera_shutdown()
     println("PASS: Flow Chimera JSON action contract")
