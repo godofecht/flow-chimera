@@ -1,0 +1,23 @@
+import "src/chimera.flow"
+
+function main() -> i32 {
+    if !chimera_init() {
+        println("Could not initialize Flow Chimera")
+        return 1
+    }
+    println("Flow Chimera | bounded agent-loop demonstration")
+    let a: ToolResult = chimera_step("Can you echo this?", "echo", "Hello, Chimera", 0, 0, 0.75, 0.2, 0.65)
+    println(a.output)
+    let b: ToolResult = chimera_step("What is 5 plus 10?", "sum_numbers", "", 5, 10, 0.9, 0.3, 0.7)
+    print("sum: ")
+    println(b.number)
+    let remembered: Experience = chimera_recall_at("5 plus 10", 0)
+    print("recalled action: ")
+    println(remembered.action)
+    print("confidence mean: ")
+    println(chimera_avg_confidence())
+    let end_step: ToolResult = chimera_step("finish", "exit", "", 0, 0, 0.95, 0.1, 0.8)
+    if !end_step.should_exit { return 2 }
+    chimera_shutdown()
+    return 0
+}
