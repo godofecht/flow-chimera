@@ -1,31 +1,35 @@
-# Port mapping and parity
+# Project Chimera → Flow parity map
 
-Reference: [Project Chimera (upstream)](https://github.com/LarytheLord/Project-Chimera), `master` inspected 15 October 2026. The upstream README calls the vector database LanceDB; `agi_project/src/chimera/agent/memory.py` at that time actually imports `langchain_chroma` and `langchain_ollama`, and uses an Ollama embedding model (`qwen3-embedding:0.6b`). The current port does not claim either database.
+Reference: [LarytheLord/Project-Chimera](https://github.com/LarytheLord/Project-Chimera) (`master` inspected 15 October 2026). Upstream's `agi_project/src/chimera/agent/memory.py` actually uses LangChain Chroma and Ollama embeddings (`qwen3-embedding:0.6b`), despite some README references to LanceDB.
 
-| Upstream module | Flow implementation | Status |
+| Upstream component | Flow implementation | Parity |
 |---|---|---|
-| `agent/memory.py`: WorkingMemory | `chimera_work_add/get/clear` | Bounded 20-record ring; in-memory |
-| `agent/memory.py`: VectorEpisodicMemory | `chimera_remember/recall_at` | Bounded 64 episodes; substring only, not semantic or persistent |
-| `agent/agent.py`: action execution | `chimera_act` | Allowlisted echo, sum_numbers, exit only |
-| `agent/agent.py`: loop | `chimera_step` | One deterministic step at a time; caller supplies observation and selected action |
-| `consciousness/narcissus_core.py`: state and heuristics | `chimera_record_state`, confidence/focus/load/repetition functions | Numeric subset, 32-state history; excludes full self-simulation |
-| `rlhf/oracle.py`: ranking | `chimera_best_candidate` | Selects maximum externally supplied score, no learned model |
-| `cognitive_core/prometheus_core.py`: Gemini HTTP | none | Not ported |
-| `rlhf/reward_model.py`: DistilBERT/TR L | none | Not ported |
-| `agent/tool_user.py`: web search, filesystem, terminal | none | Not ported; omitted for safety and dependency separation |
-| `consciousness/conscious_agent.py` integration | `chimera_step` records cognitive state | Partial |
-| Knight Medicare therapy integration | none | Not ported |
+| `agent/memory.py` — WorkingMemory | `chimera_work_add/get/clear`, 20-entry chronological ring | Behavioural subset |
+| `agent/memory.py` — VectorEpisodicMemory | `chimera_remember_vector`, cosine-ranked `chimera_recall_vector`; lexical `chimera_recall_at`; versioned binary snapshots | Partial: 8D externally supplied vectors, 64-entry bounded memory, not Chroma/Ollama |
+| `agent/agent.py` — perceive/think/act loop | `chimera_step` and `chimera_record_external_step` | Partial: caller handles model generation/loop |
+| `agent/tool_user.py` — ToolRegistry | `src/tools.flow`: register, unregister, enumerate, allow/deny, record host-completed outcomes | Partial: schema metadata only, no JSON validation or network/filesystem/process execution |
+| `consciousness/narcissus_core.py` — SelfModelingEngine | `chimera_record_state`, `chimera_self_model`, confidence/focus/load/repetition metrics | Partial: 32 states, numeric trends only, no attention maps or arbitrary personal-pattern history |
+| `consciousness/narcissus_core.py` — simulation | `chimera_what_if` | Different: descriptive historical heuristic, **not** predictive sandbox simulation |
+| `consciousness/integration.py` | Monitoring toggles, reflection period, external outcome recording | Partial |
+| `rlhf/oracle.py` | `chimera_best_candidate` with supplied scores | Partial: caller provides scores |
+| `cognitive_core/prometheus_core.py` — Gemini HTTP | Host boundary only | Missing model HTTP provider, response parser and key management |
+| `rlhf/reward_model.py` — DistilBERT/TR L training | None | Missing tokenizer, inference, preference training and model serialization |
+| `consciousness/emotion.py` / `emotion/detector.py` | None | Missing external emotion classifiers |
+| `consciousness/conscious_agent.py` | Core state recording, reflection control, host-bound action execution | Partial, no model inference |
+| Knight Medicare integration / CLI | None | Missing application adapter / interactive CLI |
 
-## Runtime contract
+## Snapshot contract
 
-The caller invokes `chimera_init()`, then drives `chimera_step(observation, action, payload, a, b, confidence, load, focus)` and finally invokes `chimera_shutdown()`. The caller owns model inference, parsing and proposal scoring. No side effects beyond in-memory bookkeeping and known actions occur.
+The `FCH2` snapshot stores a 4-byte magic header, six little-endian unsigned 32-bit fields (working count, episode count, cognitive count, steps, reflection period, monitoring flag), then records in chronological order. Each string uses a 32-bit byte length plus exactly that many bytes (max 8192). Episodes additionally contain a vector-present flag and, when present, eight native double values. Each cognitive state stores its decision followed by confidence, processing load and focus doubles.
 
-`chimera_recall_at` and `chimera_work_get` yield borrowed strings, invalidated by later evictions or shutdown. All ring entries own copies of their input strings. Flow Tier-1 64-bit ABI is required due to eight-byte pointer allocation. Initialization and shutdown are idempotent.
+Live rings are replaced only after validation of magic, caps, lengths, vector values, cognitive bounds and the end-of-file marker. Input strings containing embedded NUL bytes are rejected. All strings stored in Flow rings are owned copies, and returned references are borrowed. Saving overwrites the target path directly and is not atomic in the event of a crash. A memory allocation failure during the final application of a validated snapshot can cause a partial in-memory restore. The snapshot is not encrypted or portable to different endianness/IEEE-754 architectures.
 
-The source author's terminology (consciousness, self-awareness) describes metacognitive instrumentation, not evidence of phenomenal consciousness.
+## Safety boundary
 
-## Subsequent parity work
+Models cannot directly run arbitrary shell commands, read files or browse the web through `chimera_step`. A host may register metadata for external tools and enable each tool explicitly; it must independently validate structured arguments, enforce effect permissions, sandbox process/filesystem/network operations and verify that the reported result is genuine. Metadata and permission status are **not** saved in the `FCH2` snapshot. Callers must not hand untrusted model output directly to `chimera_snapshot_save/load` file paths.
 
-To reach functional parity, implement a provider abstraction for model generation with explicit network permissions, bounded response and JSON validation; add semantic embeddings plus durable vector storage; support extensible, capability-checked tool schemas; implement reward inference/training behind a separately tested backend; and add structured persistence and end-to-end equivalence fixtures.
+The upstream terms “consciousness” and “self-awareness” are labels for introspection instrumentation, not evidence of subjective experience. Similarly, `chimera_what_if` is a deterministic difference heuristic, not an empirically calibrated forecast.
 
-Those are missing features, not implemented stubs.
+## Work remaining for complete parity
+
+Native or external Gemini-compatible response generation with credential and bounded-JSON handling; durable vector search with model-based embeddings and variable embedding dimensions; real user-controlled web/file/terminal tools with schemas and sandboxed execution; reward training/inference and emotion classification; actual application-level agent loops, structured prompts and end-to-end compatibility fixtures; CLI and consumer integration. These are currently **missing**, rather than stubbed as successful implementations.
