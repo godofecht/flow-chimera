@@ -28,6 +28,12 @@ function main() -> i32 {
     let stop: ToolResult = chimera_step_json("finish", "{\"tool_name\":\"exit\",\"arguments\":{}}", 0.8, 0.2, 0.7)
     if !stop.should_exit { return 11 }
     if chimera_steps() != 3 { return 12 }
+    let unicode: ParsedAction = chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"caf\\u00e9\"}}")
+    if !unicode.valid or !eq(unicode.payload, "café") { return 13 }
+    let emoji: ParsedAction = chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"\\uD83D\\uDE00\"}}")
+    if !emoji.valid or !eq(emoji.payload, "😀") { return 14 }
+    if chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"\\uD83D\"}}").valid { return 15 }
+    if chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"\\uDE00\"}}").valid { return 16 }
     chimera_json_release()
     chimera_shutdown()
     println("PASS: Flow Chimera JSON action contract")
