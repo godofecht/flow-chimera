@@ -19,7 +19,7 @@ function main() -> i32 {
     if chimera_tool_count() != 2 { return 7 }
     if chimera_tool_find("unknown").found { return 8 }
     let web: HostTool = chimera_tool_find("web_search")
-    if !web.found or web.enabled or web.capability != 2 { return 9 }
+    if !web.found or web.enabled or web.effect_class != 2 { return 9 }
     if chimera_tool_complete("query", "web_search", "results", 0.5, 0.3, 0.4) { return 10 }
     if chimera_steps() != 0 { return 11 }
     if !chimera_tool_allow("web_search", true) { return 12 }
@@ -34,6 +34,6 @@ function main() -> i32 {
     chimera_tools_shutdown()
     if chimera_tool_count() != 0 { return 21 }
     chimera_shutdown()
-    println("PASS: external host capability tool registry")
+    println("PASS: external host effect_class tool registry")
     return 0
 }
