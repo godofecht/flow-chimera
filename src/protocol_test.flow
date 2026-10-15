@@ -1,0 +1,35 @@
+import "chimera.flow"
+import "protocol.flow"
+import "json_agent.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+}
+
+function eq(a: string, b: string) -> bool {
+    return strcmp(a, b) == 0
+}
+
+function main() -> i32 {
+    if !chimera_init() { return 1 }
+    let a: ParsedAction = chimera_parse_action("{\"tool_name\":\"sum_numbers\",\"arguments\":{\"a\":5,\"b\":10}}")
+    if !a.valid or !eq(a.tool_name, "sum_numbers") or a.a != 5 or a.b != 10 { return 2 }
+    let result: ToolResult = chimera_step_json("add", "{\"arguments\":{\"b\":10,\"a\":5},\"tool_name\":\"sum_numbers\"}", 0.8, 0.2, 0.7)
+    if !result.success or result.number != 15 { return 3 }
+    let e: ParsedAction = chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"a\\nline\"}}")
+    if !e.valid or !eq(e.payload, "a\nline") { return 4 }
+    if chimera_parse_action("{\"tool_name\":\"exit\",\"arguments\":{},}").valid { return 5 }
+    if chimera_parse_action("{\"tool_name\":\"exit\",\"arguments\":{\"oops\": [1, } }").valid { return 6 }
+    if chimera_parse_action("{\"tool_name\":\"exit\"}").valid { return 7 }
+    if chimera_parse_action("{\"tool_name\":5,\"arguments\":{}}").valid { return 8 }
+    if chimera_parse_action("{\"tool_name\":\"echo\",\"arguments\":{\"text\":\"bad\\x\"}}").valid { return 9 }
+    let x: ToolResult = chimera_step_json("try shell", "{\"tool_name\":\"Terminal_exute\",\"arguments\":{\"text\":\"uname\"}}", 0.8, 0.2, 0.7)
+    if x.success or !eq(x.output, "tool_not_registered") { return 10 }
+    let stop: ToolResult = chimera_step_json("finish", "{\"tool_name\":\"exit\",\"arguments\":{}}", 0.8, 0.2, 0.7)
+    if !stop.should_exit { return 11 }
+    if chimera_steps() != 3 { return 12 }
+    chimera_json_release()
+    chimera_shutdown()
+    println("PASS: Flow Chimera JSON action contract")
+    return 0
+}
