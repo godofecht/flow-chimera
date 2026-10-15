@@ -1,0 +1,60 @@
+# Runnable autonomous session host. Configure the provider through environment.
+# CHIMERA_LLM_API_KEY required, CHIMERA_LLM_API_URL optional,
+# CHIMERA_TASK required, CHIMERA_SNAPSHOT optional.
+# The action budget is intentionally finite (maximum 8 steps).
+import "live_agent.flow"
+
+extern {
+    function getenv(key: string) -> string
+    function strlen(value: string) -> i64
+}
+
+function main() -> i32 {
+    let task: string = getenv("CHIMERA_TASK")
+    if task == null or strlen(task) == 0 {
+        println("Set CHIMERA_TASK to the requested work.")
+        return 2
+    }
+    if !chimera_init() {
+        println("Chimera memory initialization failed.")
+        return 3
+    }
+    let snapshot: string = getenv("CHIMERA_SNAPSHOT")
+    if snapshot != null and strlen(snapshot) > 0 {
+        if chimera_snapshot_load(snapshot) {
+            println("Loaded previous Chimera memory.")
+        }
+    }
+    println("Chimera autonomous Flow host (max 8 tool steps)")
+    let mut observation: string = task
+    let mut result_code: i32 = 0
+    let mut stopped: bool = false
+    for turn in 0 to 8 {
+        if !stopped {
+            let result: ToolResult = chimera_live_step(observation, 0.7, 0.5, 0.4, 0.5, true)
+            print("turn ")
+            print(turn)
+            print(": ")
+            println(result.output)
+            if !result.success {
+                result_code = 4
+                stopped = true
+            } else {
+                if result.should_exit { stopped = true }
+                if !stopped {
+                    let n: i32 = chimera_work_size()
+                    if n > 0 { observation = chimera_work_get(n - 1) }
+                }
+            }
+        }
+    }
+    if snapshot != null and strlen(snapshot) > 0 {
+        if !chimera_snapshot_save(snapshot) {
+            println("Warning: could not save Chimera snapshot.")
+            if result_code == 0 { result_code = 5 }
+        }
+    }
+    chimera_json_release()
+    chimera_shutdown()
+    return result_code
+}
