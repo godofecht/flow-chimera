@@ -164,6 +164,44 @@ function j_load(json: string) -> bool {
 
 # Unescapes a validated JSON string to scratch. Supports ASCII \u00XX escapes;
 # other unicode escapes explicitly rejected rather than mangled.
+function j_fourhex(at: i32) -> i32 {
+    if at < 0 or at + 3 >= j_size { return -1 }
+    let mut cp: i32 = 0
+    for i in 0 to 4 {
+        let v: i32 = j_hex(j_source[at + i])
+        if v < 0 { return -1 }
+        cp = cp * 16 + v
+    }
+    return cp
+}
+
+function j_put_utf8(cp: i32) -> bool {
+    if cp <= 0 or cp > 1114111 { return false }
+    if cp >= 55296 and cp <= 57343 { return false }
+    if cp <= 127 {
+        j_scratch[j_used] = cp as u8
+        j_used = j_used + 1
+    } elif cp <= 2047 {
+        j_scratch[j_used] = (192 + cp / 64) as u8
+        j_scratch[j_used + 1] = (128 + cp % 64) as u8
+        j_used = j_used + 2
+    } elif cp <= 65535 {
+        j_scratch[j_used] = (224 + cp / 4096) as u8
+        j_scratch[j_used + 1] = (128 + (cp / 64) % 64) as u8
+        j_scratch[j_used + 2] = (128 + cp % 64) as u8
+        j_used = j_used + 3
+    } else {
+        j_scratch[j_used] = (240 + cp / 262144) as u8
+        j_scratch[j_used + 1] = (128 + (cp / 4096) % 64) as u8
+        j_scratch[j_used + 2] = (128 + (cp / 64) % 64) as u8
+        j_scratch[j_used + 3] = (128 + cp % 64) as u8
+        j_used = j_used + 4
+    }
+    return true
+}
+
+# Full JSON \uXXXX / surrogate-pair decoding into valid UTF-8.
+# Borrowed result is overwritten on the next JSON parse.
 function j_decode(at: i32) -> string {
     let end: i32 = j_string_end(at)
     if end < 0 or j_used + end - at + 1 >= JSON_LIMIT { return null }
@@ -174,23 +212,34 @@ function j_decode(at: i32) -> string {
         if c == 92 {
             p = p + 1
             c = j_source[p]
-            if c == 110 { c = 10 }
-            if c == 114 { c = 13 }
-            if c == 116 { c = 9 }
-            if c == 98 { c = 8 }
-            if c == 102 { c = 12 }
             if c == 117 {
-                if j_source[p + 1] != 48 or j_source[p + 2] != 48 { return null }
-                let first: i32 = j_hex(j_source[p + 3])
-                let second: i32 = j_hex(j_source[p + 4])
-                c = (first * 16 + second) as u8
-                if c == 0 { return null }
-                p = p + 4
+                let mut cp: i32 = j_fourhex(p + 1)
+                if cp < 0 { return null }
+                if cp >= 55296 and cp <= 56319 {
+                    if p + 10 >= end { return null }
+                    if j_source[p + 5] != 92 or j_source[p + 6] != 117 { return null }
+                    let low: i32 = j_fourhex(p + 7)
+                    if low < 56320 or low > 57343 { return null }
+                    cp = 65536 + (cp - 55296) * 1024 + (low - 56320)
+                    p = p + 6
+                }
+                if !j_put_utf8(cp) { return null }
+                p = p + 5
+            } else {
+                if c == 110 { c = 10 }
+                elif c == 114 { c = 13 }
+                elif c == 116 { c = 9 }
+                elif c == 98 { c = 8 }
+                elif c == 102 { c = 12 }
+                j_scratch[j_used] = c
+                j_used = j_used + 1
+                p = p + 1
             }
+        } else {
+            j_scratch[j_used] = c
+            j_used = j_used + 1
+            p = p + 1
         }
-        j_scratch[j_used] = c
-        j_used = j_used + 1
-        p = p + 1
     }
     j_scratch[j_used] = 0
     j_used = j_used + 1
