@@ -1,4 +1,4 @@
-import "src/chimera.flow"
+import "../src/chimera.flow"
 
 extern {
     function strcmp(a: string, b: string) -> i32
