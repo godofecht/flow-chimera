@@ -1,0 +1,24 @@
+import "live_agent.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+}
+
+function main() -> i32 {
+    if !chimera_init() { return 1 }
+    let preview: string = chimera_make_prompt("5 plus 10", true)
+    if preview == null { return 2 }
+    free(preview as ptr<void>)
+    let outcome: ToolResult = chimera_live_step("five plus ten", 0.7, 0.9, 0.3, 0.8, true)
+    if !outcome.success {
+        print("live_step failed: ")
+        println(outcome.output)
+        return 3
+    }
+    if outcome.number != 15 or chimera_steps() != 1 { return 4 }
+    if strcmp(chimera_recall_at("five plus ten", 0).action, "sum_numbers") != 0 { return 5 }
+    chimera_json_release()
+    chimera_shutdown()
+    println("PASS: authenticated Gemini-compatible HTTP to agent action")
+    return 0
+}
