@@ -1,0 +1,49 @@
+# Autonomous Flow agent turn using a local Ollama language model.
+# The model never receives filesystem/terminal/web capabilities by default.
+import "live_agent.flow"
+import "ollama_provider.flow"
+
+extern {
+    function getenv(name: string) -> string
+    function strlen(value: string) -> i64
+    function calloc(count: i64, size: i64) -> ptr<void>
+    function free(memory: ptr<void>) -> void
+}
+
+export function chimera_ollama_live_step(observation: string, confidence: f64, load: f64, focus: f64, introspection: bool) -> ToolResult {
+    let prompt: string = chimera_make_prompt(observation, introspection)
+    if prompt == null {
+        return ToolResult {success: false, should_exit: false, output: "prompt_allocation_failed", number: 0}
+    }
+    let mut model: string = getenv("CHIMERA_OLLAMA_GENERATE_MODEL")
+    if model == null { model = "qwen2.5:7b" }
+    let request: string = chimera_ollama_generate_request(model, prompt)
+    free(prompt as ptr<void>)
+    if request == null {
+        return ToolResult {success: false, should_exit: false, output: "ollama_request_encoding_failed", number: 0}
+    }
+    let answer: OllamaHttpResult = chimera_ollama_generate_post(request)
+    chimera_ollama_free(request)
+    if !answer.success {
+        chimera_ollama_free(answer.body)
+        return ToolResult {success: false, should_exit: false, output: "ollama_generation_failed", number: answer.exit_status}
+    }
+    let generated: string = chimera_ollama_generated_text(answer.body)
+    if strlen(generated) == 0 {
+        chimera_ollama_free(answer.body)
+        return ToolResult {success: false, should_exit: false, output: "ollama_generation_incomplete", number: 0}
+    }
+    # j_load() uses a shared scratch arena. Copy before parsing the inner JSON.
+    let n: i32 = strlen(generated) as i32
+    let copy: ptr<u8> = calloc((n + 1) as i64, 1) as ptr<u8>
+    if copy == null {
+        chimera_ollama_free(answer.body)
+        return ToolResult {success: false, should_exit: false, output: "action_allocation_failed", number: 0}
+    }
+    let source: ptr<u8> = generated as ptr<u8>
+    for i in 0 to n { copy[i] = source[i] }
+    let outcome: ToolResult = chimera_step_json(observation, copy as string, confidence, load, focus)
+    free(copy as ptr<void>)
+    chimera_ollama_free(answer.body)
+    return outcome
+}
