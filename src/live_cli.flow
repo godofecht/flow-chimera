@@ -7,6 +7,7 @@ import "live_agent.flow"
 extern {
     function getenv(key: string) -> string
     function strlen(value: string) -> i64
+    function atoi(value: string) -> i32
 }
 
 function main() -> i32 {
@@ -29,7 +30,13 @@ function main() -> i32 {
     let mut observation: string = task
     let mut result_code: i32 = 0
     let mut stopped: bool = false
-    for turn in 0 to 8 {
+    let mut max_steps: i32 = 8
+    let configured: string = getenv("CHIMERA_MAX_STEPS")
+    if configured != null {
+        let requested: i32 = atoi(configured)
+        if requested >= 1 and requested <= 8 { max_steps = requested }
+    }
+    for turn in 0 to max_steps {
         if !stopped {
             let result: ToolResult = chimera_live_step(observation, 0.7, 0.5, 0.4, 0.5, true)
             print("turn ")
