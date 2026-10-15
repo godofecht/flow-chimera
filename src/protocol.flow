@@ -448,3 +448,18 @@ export function chimera_ollama_embedding_decode(json: string, output: ptr<f64>, 
     free(scratch as ptr<void>)
     return OllamaEmbeddingDecode {ok: true, dimensions: count}
 }
+
+
+# Ollama non-streaming /api/generate JSON text field. Requires done=true,
+# so partial or interrupted generations cannot dispatch actions.
+export function chimera_ollama_generated_text(json: string) -> string {
+    if !j_load(json) or j_source[j_ws(0)] != 123 { return "" }
+    let root: i32 = j_ws(0)
+    let done: i32 = j_field(root, "done")
+    if done < 0 or j_lit(done, "true") != done + 4 { return "" }
+    let response: i32 = j_field(root, "response")
+    if response < 0 or j_source[response] != 34 { return "" }
+    let text: string = j_decode(response)
+    if text == null { return "" }
+    return text
+}
