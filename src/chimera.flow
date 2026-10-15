@@ -9,16 +9,32 @@ extern {
     function strcpy(dest: ptr<u8>, src: ptr<u8>) -> ptr<u8>
     function strcmp(a: string, b: string) -> i32
     function strstr(haystack: ptr<u8>, needle: ptr<u8>) -> ptr<u8>
+    function sqrt(value: f64) -> f64
 }
 
 const WORK_CAP: i32 = 20
 const EPISODE_CAP: i32 = 64
 const STATE_CAP: i32 = 32
+const VECTOR_DIM: i32 = 8
 
 struct Experience {
     observation: string,
     action: string,
     outcome: string
+}
+
+struct VectorMatch {
+    observation: string,
+    action: string,
+    outcome: string,
+    similarity: f64
+}
+
+struct CognitiveSnapshot {
+    decision: string,
+    confidence: f64,
+    processing_load: f64,
+    focus: f64
 }
 
 struct ToolResult {
@@ -37,6 +53,8 @@ let mut work_size: i32 = 0
 let mut episode_observations: ptr<string> = null
 let mut episode_actions: ptr<string> = null
 let mut episode_outcomes: ptr<string> = null
+let mut episode_vectors: ptr<f64> = null
+let mut episode_vector_valid: ptr<i32> = null
 let mut episode_next: i32 = 0
 let mut episode_size: i32 = 0
 
@@ -47,6 +65,8 @@ let mut state_focus: ptr<f64> = null
 let mut state_next: i32 = 0
 let mut state_size: i32 = 0
 let mut total_steps: i32 = 0
+let mut monitoring_enabled: bool = true
+let mut reflection_frequency: i32 = 5
 
 function owned_copy(value: string) -> string {
     let count: i64 = strlen(value) + 1
@@ -89,6 +109,8 @@ export function chimera_shutdown() -> void {
         }
         free(episode_outcomes as ptr<void>)
     }
+    if episode_vectors != null { free(episode_vectors as ptr<void>) }
+    if episode_vector_valid != null { free(episode_vector_valid as ptr<void>) }
     if state_decisions != null {
         for i in 0 to STATE_CAP {
             dispose_owned(state_decisions[i])
@@ -99,6 +121,8 @@ export function chimera_shutdown() -> void {
     if state_loads != null { free(state_loads as ptr<void>) }
     if state_focus != null { free(state_focus as ptr<void>) }
     work_records = null
+    episode_vectors = null
+    episode_vector_valid = null
     episode_observations = null
     episode_actions = null
     episode_outcomes = null
@@ -113,6 +137,8 @@ export function chimera_shutdown() -> void {
     state_next = 0
     state_size = 0
     total_steps = 0
+    monitoring_enabled = true
+    reflection_frequency = 5
     ready = false
 }
 
@@ -123,16 +149,22 @@ export function chimera_init() -> bool {
     episode_observations = calloc(EPISODE_CAP as i64, 8) as ptr<string>
     episode_actions = calloc(EPISODE_CAP as i64, 8) as ptr<string>
     episode_outcomes = calloc(EPISODE_CAP as i64, 8) as ptr<string>
+    episode_vectors = calloc((EPISODE_CAP * VECTOR_DIM) as i64, 8) as ptr<f64>
+    episode_vector_valid = calloc(EPISODE_CAP as i64, 4) as ptr<i32>
     state_decisions = calloc(STATE_CAP as i64, 8) as ptr<string>
     state_confidences = calloc(STATE_CAP as i64, 8) as ptr<f64>
     state_loads = calloc(STATE_CAP as i64, 8) as ptr<f64>
     state_focus = calloc(STATE_CAP as i64, 8) as ptr<f64>
-    if work_records == null or episode_observations == null or episode_actions == null or episode_outcomes == null or state_decisions == null or state_confidences == null or state_loads == null or state_focus == null {
+    if work_records == null or episode_observations == null or episode_actions == null or episode_outcomes == null or episode_vectors == null or episode_vector_valid == null or state_decisions == null or state_confidences == null or state_loads == null or state_focus == null {
         chimera_shutdown()
         return false
     }
     ready = true
     return true
+}
+
+export function chimera_is_ready() -> bool {
+    return ready
 }
 
 export function chimera_work_size() -> i32 {
@@ -168,6 +200,30 @@ export function chimera_work_get(index: i32) -> string {
     return work_records[physical]
 }
 
+export function chimera_episode_clear() -> void {
+    if !ready { return }
+    for i in 0 to EPISODE_CAP {
+        dispose_owned(episode_observations[i])
+        dispose_owned(episode_actions[i])
+        dispose_owned(episode_outcomes[i])
+        episode_observations[i] = null
+        episode_actions[i] = null
+        episode_outcomes[i] = null
+        episode_vector_valid[i] = 0
+    }
+    episode_next = 0
+    episode_size = 0
+}
+
+# Oldest retained episode is index zero. Strings are borrowed until mutation.
+export function chimera_episode_get(index: i32) -> Experience {
+    if !ready or index < 0 or index >= episode_size {
+        return Experience { observation: "", action: "", outcome: "" }
+    }
+    let physical: i32 = (episode_next - episode_size + index + EPISODE_CAP) % EPISODE_CAP
+    return Experience { observation: episode_observations[physical], action: episode_actions[physical], outcome: episode_outcomes[physical] }
+}
+
 export function chimera_episode_size() -> i32 {
     return episode_size
 }
@@ -189,9 +245,82 @@ export function chimera_remember(observation: string, action: string, outcome: s
     episode_observations[episode_next] = a
     episode_actions[episode_next] = b
     episode_outcomes[episode_next] = c
+    episode_vector_valid[episode_next] = 0
     episode_next = (episode_next + 1) % EPISODE_CAP
     if episode_size < EPISODE_CAP { episode_size = episode_size + 1 }
     return true
+}
+
+# Store an embedding alongside an episode. Embeddings come from a caller-owned
+# model; this runtime does not pretend to generate semantic embeddings.
+# Exactly eight finite components are required.
+export function chimera_remember_vector(observation: string, action: string, outcome: string, vector: ptr<f64>, dimensions: i32) -> bool {
+    if !ready or vector == null or dimensions != VECTOR_DIM { return false }
+    let mut norm: f64 = 0.0
+    for i in 0 to VECTOR_DIM {
+        let value: f64 = vector[i]
+        if value != value or value > 1.0e100 or value < -1.0e100 { return false }
+        norm = norm + value * value
+    }
+    if norm <= 0.0 { return false }
+    if !chimera_remember(observation, action, outcome) { return false }
+    let physical: i32 = (episode_next - 1 + EPISODE_CAP) % EPISODE_CAP
+    for i in 0 to VECTOR_DIM {
+        episode_vectors[physical * VECTOR_DIM + i] = vector[i]
+    }
+    episode_vector_valid[physical] = 1
+    return true
+}
+
+function vector_similarity(query: ptr<f64>, physical: i32, query_norm: f64) -> f64 {
+    let mut dot: f64 = 0.0
+    let mut norm: f64 = 0.0
+    for i in 0 to VECTOR_DIM {
+        let x: f64 = episode_vectors[physical * VECTOR_DIM + i]
+        dot = dot + query[i] * x
+        norm = norm + x * x
+    }
+    if norm <= 0.0 { return -2.0 }
+    return dot / sqrt(query_norm * norm)
+}
+
+# Ranked cosine retrieval, newest wins an exact similarity tie.
+# Empty result has similarity -2, distinct from a valid -1 cosine score.
+export function chimera_recall_vector(query: ptr<f64>, dimensions: i32, match_rank: i32) -> VectorMatch {
+    let empty: VectorMatch = VectorMatch { observation: "", action: "", outcome: "", similarity: -2.0 }
+    if !ready or query == null or dimensions != VECTOR_DIM or match_rank < 0 { return empty }
+    let mut query_norm: f64 = 0.0
+    for i in 0 to VECTOR_DIM {
+        let x: f64 = query[i]
+        if x != x or x > 1.0e100 or x < -1.0e100 { return empty }
+        query_norm = query_norm + x * x
+    }
+    if query_norm <= 0.0 { return empty }
+    for offset in 0 to episode_size {
+        let physical: i32 = (episode_next - 1 - offset + EPISODE_CAP) % EPISODE_CAP
+        if episode_vector_valid[physical] != 0 {
+            let score: f64 = vector_similarity(query, physical, query_norm)
+            let mut preceding: i32 = 0
+            for other in 0 to episode_size {
+                let other_physical: i32 = (episode_next - 1 - other + EPISODE_CAP) % EPISODE_CAP
+                if episode_vector_valid[other_physical] != 0 {
+                    let other_score: f64 = vector_similarity(query, other_physical, query_norm)
+                    if other_score > score or (other_score == score and other < offset) {
+                        preceding = preceding + 1
+                    }
+                }
+            }
+            if preceding == match_rank {
+                return VectorMatch {
+                    observation: episode_observations[physical],
+                    action: episode_actions[physical],
+                    outcome: episode_outcomes[physical],
+                    similarity: score
+                }
+            }
+        }
+    }
+    return empty
 }
 
 function contains_text(haystack: string, needle: string) -> bool {
@@ -221,13 +350,40 @@ export function chimera_recall_at(query: string, match_rank: i32) -> Experience 
     return empty
 }
 
+export function chimera_state_get(index: i32) -> CognitiveSnapshot {
+    if !ready or index < 0 or index >= state_size {
+        return CognitiveSnapshot { decision: "", confidence: 0.0, processing_load: 0.0, focus: 0.0 }
+    }
+    let physical: i32 = (state_next - state_size + index + STATE_CAP) % STATE_CAP
+    return CognitiveSnapshot {
+        decision: state_decisions[physical],
+        confidence: state_confidences[physical],
+        processing_load: state_loads[physical],
+        focus: state_focus[physical]
+    }
+}
+
+export function chimera_monitor_enable(enabled: bool) -> void {
+    monitoring_enabled = enabled
+}
+
+export function chimera_set_reflection_frequency(frequency: i32) -> bool {
+    if frequency <= 0 { return false }
+    reflection_frequency = frequency
+    return true
+}
+
+export function chimera_reflection_due() -> bool {
+    return ready and monitoring_enabled and total_steps > 0 and total_steps % reflection_frequency == 0
+}
+
 export function chimera_state_size() -> i32 {
     return state_size
 }
 
 export function chimera_record_state(decision: string, confidence: f64, processing_load: f64, focus: f64) -> bool {
     if !ready { return false }
-    if confidence < 0.0 or confidence > 1.0 or processing_load < 0.0 or processing_load > 1.0 or focus < 0.0 or focus > 1.0 {
+    if confidence != confidence or processing_load != processing_load or focus != focus or confidence < 0.0 or confidence > 1.0 or processing_load < 0.0 or processing_load > 1.0 or focus < 0.0 or focus > 1.0 {
         return false
     }
     let copy: string = owned_copy(decision)
@@ -333,7 +489,7 @@ export function chimera_step(observation: string, action: string, payload: strin
     if !ready {
         return ToolResult { success: false, should_exit: false, output: "runtime_not_initialized", number: 0 }
     }
-    if confidence < 0.0 or confidence > 1.0 or load < 0.0 or load > 1.0 or focus < 0.0 or focus > 1.0 {
+    if confidence != confidence or load != load or focus != focus or confidence < 0.0 or confidence > 1.0 or load < 0.0 or load > 1.0 or focus < 0.0 or focus > 1.0 {
         return ToolResult { success: false, should_exit: false, output: "invalid_cognitive_state", number: 0 }
     }
     let outcome: ToolResult = chimera_act(action, payload, a, b)
