@@ -20,4 +20,5 @@ jobs:
           ./flow-toolchain/flow run src/parity_test.flow
           ./flow-toolchain/flow run src/tool_test.flow
           ./flow-toolchain/flow run src/protocol_test.flow
+          ./flow-toolchain/flow run src/provider_test.flow
           ./flow-toolchain/flow run src/demo.flow
