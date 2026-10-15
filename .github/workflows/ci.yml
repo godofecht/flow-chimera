@@ -16,5 +16,5 @@ jobs:
       - name: Build and test Flow Chimera
         run: |
           ./flow-toolchain/flow version
-          ./flow-toolchain/flow run tests/chimera_test.flow
+          ./flow-toolchain/flow run src/chimera_test.flow
           ./flow-toolchain/flow run src/demo.flow
