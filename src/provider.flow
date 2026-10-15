@@ -10,7 +10,7 @@ extern {
     function strlen(s: string) -> i64
     function pipe(fds: ptr<i32>) -> i32
     function fork() -> i32
-    function dup2(from: i32, to: i32) -> i32
+    function dup2(from: i32, target: i32) -> i32
     function close(fd: i32) -> i32
     function execvp(file: string, argv: ptr<string>) -> i32
     function _exit(status: i32) -> void
