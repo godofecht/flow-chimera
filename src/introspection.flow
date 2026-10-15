@@ -1,0 +1,84 @@
+# Metacognitive readout and evidence-based what-if heuristics.
+# These measures are descriptive, not evidence of machine consciousness.
+import "chimera.flow"
+
+export struct ChimeraSelfModel {
+    observations: i32,
+    mean_confidence: f64,
+    mean_processing_load: f64,
+    mean_focus: f64,
+    load_warning: bool,
+    repeated_decision: bool,
+    focus_deviation: bool,
+    reflection_due: bool
+}
+
+export struct ChimeraWhatIf {
+    valid: bool,
+    instability: f64,
+    behaviour_change: f64,
+    confidence_shift: f64,
+    requires_review: bool
+}
+
+function chimera_abs(value: f64) -> f64 {
+    if value < 0.0 { return -value }
+    return value
+}
+
+function chimera_clamp01(value: f64) -> f64 {
+    if value < 0.0 { return 0.0 }
+    if value > 1.0 { return 1.0 }
+    return value
+}
+
+export function chimera_self_model() -> ChimeraSelfModel {
+    let count: i32 = chimera_state_size()
+    let mut load: f64 = 0.0
+    for i in 0 to count {
+        let state: CognitiveSnapshot = chimera_state_get(i)
+        load = load + state.processing_load
+    }
+    if count > 0 { load = load / (count as f64) }
+    return ChimeraSelfModel {
+        observations: count,
+        mean_confidence: chimera_avg_confidence(),
+        mean_processing_load: load,
+        mean_focus: chimera_avg_focus(),
+        load_warning: chimera_load_warning(),
+        repeated_decision: chimera_repeated_decision(),
+        focus_deviation: chimera_focus_deviated(),
+        reflection_due: chimera_reflection_due()
+    }
+}
+
+# Estimates differences relative to recorded history rather than predicting
+# future behaviour. Scores are unitless heuristics, not calibrated risk.
+export function chimera_what_if(confidence: f64, load: f64, focus: f64) -> ChimeraWhatIf {
+    let invalid: ChimeraWhatIf = ChimeraWhatIf {
+        valid: false, instability: 0.0, behaviour_change: 0.0,
+        confidence_shift: 0.0, requires_review: true
+    }
+    if confidence != confidence or load != load or focus != focus { return invalid }
+    if confidence < 0.0 or confidence > 1.0 or load < 0.0 or load > 1.0 or focus < 0.0 or focus > 1.0 { return invalid }
+    let reference: ChimeraSelfModel = chimera_self_model()
+    let mut instability: f64 = 0.0
+    let mut behaviour: f64 = 0.0
+    let mut confidence_delta: f64 = 0.0
+    if reference.observations > 0 {
+        instability = chimera_clamp01(chimera_abs(load - reference.mean_processing_load) * 0.5 + load * 0.5)
+        behaviour = chimera_clamp01(chimera_abs(focus - reference.mean_focus) * 0.5 + chimera_abs(load - reference.mean_processing_load) * 0.5)
+        confidence_delta = chimera_abs(confidence - reference.mean_confidence)
+    } else {
+        instability = load
+        behaviour = 0.0
+        confidence_delta = 0.0
+    }
+    return ChimeraWhatIf {
+        valid: true,
+        instability: instability,
+        behaviour_change: behaviour,
+        confidence_shift: confidence_delta,
+        requires_review: instability > 0.8 or behaviour > 0.4 or confidence_delta > 0.3
+    }
+}
