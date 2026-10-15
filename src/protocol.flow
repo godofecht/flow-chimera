@@ -275,3 +275,41 @@ export function chimera_json_release() -> void {
     j_size = 0
     j_used = 0
 }
+
+
+# Return array element start (zero-based) or -1.
+function j_item(array_at: i32, wanted: i32) -> i32 {
+    if array_at < 0 or wanted < 0 or j_source[array_at] != 91 { return -1 }
+    let mut p: i32 = j_ws(array_at + 1)
+    if p >= j_size or j_source[p] == 93 { return -1 }
+    let mut index: i32 = 0
+    while p < j_size {
+        if index == wanted { return p }
+        let end: i32 = j_value(p, 1)
+        if end < 0 { return -1 }
+        p = j_ws(end)
+        if p >= j_size or j_source[p] != 44 { return -1 }
+        p = j_ws(p + 1)
+        index = index + 1
+    }
+    return -1
+}
+
+# Extracts the first candidate content.parts[0].text from a Gemini JSON response.
+# Returns "" if no valid text path exists; valid until the next JSON decode.
+export function chimera_gemini_text(json: string) -> string {
+    if !j_load(json) or j_source[j_ws(0)] != 123 { return "" }
+    let candidates: i32 = j_field(j_ws(0), "candidates")
+    let first: i32 = j_item(candidates, 0)
+    if first < 0 or j_source[first] != 123 { return "" }
+    let content: i32 = j_field(first, "content")
+    if content < 0 or j_source[content] != 123 { return "" }
+    let parts: i32 = j_field(content, "parts")
+    let piece: i32 = j_item(parts, 0)
+    if piece < 0 or j_source[piece] != 123 { return "" }
+    let txt: i32 = j_field(piece, "text")
+    if txt < 0 or j_source[txt] != 34 { return "" }
+    let decoded: string = j_decode(txt)
+    if decoded == null { return "" }
+    return decoded
+}
