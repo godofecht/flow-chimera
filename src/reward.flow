@@ -1,0 +1,73 @@
+# Online pairwise preference ranker in native Flow.
+# This is a trained linear reward *alternative*, not a DistilBERT port.
+extern {
+    function exp(x: f64) -> f64
+}
+
+const REWARD_DIM: i32 = 8
+
+export struct PreferenceModel {
+    weights: array<f64, 8>,
+    updates: i32,
+    trained: bool
+}
+
+export function chimera_reward_init() -> PreferenceModel {
+    return PreferenceModel {
+        weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        updates: 0, trained: false
+    }
+}
+
+export function chimera_reward_score(model: PreferenceModel, features: ptr<f64>, length: i32) -> f64 {
+    if features == null or length != REWARD_DIM { return 0.0 }
+    let mut score: f64 = 0.0
+    for i in 0 to REWARD_DIM {
+        score = score + model.weights[i] * features[i]
+    }
+    return score
+}
+
+# Numerically stable sigmoid for differences, avoiding exp overflow.
+export function chimera_reward_probability(delta: f64) -> f64 {
+    if delta >= 0.0 {
+        let e: f64 = exp(-delta)
+        return 1.0 / (1.0 + e)
+    }
+    let e: f64 = exp(delta)
+    return e / (1.0 + e)
+}
+
+# Return updated model; caller persists if desired. Chosen should beat rejected.
+export function chimera_reward_train_pair(model: PreferenceModel, chosen: ptr<f64>, rejected: ptr<f64>, count: i32, learning_rate: f64) -> PreferenceModel {
+    if chosen == null or rejected == null or count != REWARD_DIM { return model }
+    if learning_rate <= 0.0 or learning_rate > 1.0 or learning_rate != learning_rate { return model }
+    let score_chosen: f64 = chimera_reward_score(model, chosen, count)
+    let score_rejected: f64 = chimera_reward_score(model, rejected, count)
+    let derivative: f64 = 1.0 - chimera_reward_probability(score_chosen - score_rejected)
+    let mut next: PreferenceModel = model
+    for i in 0 to REWARD_DIM {
+        let diff: f64 = chosen[i] - rejected[i]
+        if diff != diff or diff > 1000000.0 or diff < -1000000.0 { return model }
+        next.weights[i] = model.weights[i] + learning_rate * derivative * diff
+    }
+    next.updates = model.updates + 1
+    next.trained = true
+    return next
+}
+
+export function chimera_reward_argmax(model: PreferenceModel, features: ptr<f64>, candidates: i32, stride: i32) -> i32 {
+    if features == null or candidates <= 0 or candidates > 1024 or stride != REWARD_DIM { return -1 }
+    let mut index: i32 = 0
+    let mut best: f64 = chimera_reward_score(model, features, REWARD_DIM)
+    let mut i: i32 = 1
+    while i < candidates {
+        let score: f64 = chimera_reward_score(model, features + (i * stride), REWARD_DIM)
+        if score > best {
+            best = score
+            index = i
+        }
+        i = i + 1
+    }
+    return index
+}
