@@ -1,0 +1,44 @@
+import "ollama_memory.flow"
+
+extern {
+    function getenv(key: string) -> string
+    function strlen(value: string) -> i64
+}
+
+function main() -> i32 {
+    if !chimera_semantic_init() { return 1 }
+    let path: string = getenv("CHIMERA_SEMANTIC_DB")
+    if path != null and strlen(path) > 0 {
+        if chimera_semantic_load(path) {
+            println("Recovered semantic memory snapshot")
+        }
+    }
+    if !chimera_ollama_remember("A cat rests on a sofa", "observe", "feline") {
+        println("Ollama embedding failed; check the local Ollama server and model")
+        chimera_semantic_shutdown()
+        return 2
+    }
+    if !chimera_ollama_remember("A dog is playing outside", "observe", "canine") {
+        chimera_semantic_shutdown()
+        return 3
+    }
+    let nearest: SemanticMatch = chimera_ollama_recall_text("A feline resting at home", 0)
+    if !nearest.found {
+        println("No compatible embedding found")
+        chimera_semantic_shutdown()
+        return 4
+    }
+    print("Nearest experience: ")
+    println(nearest.observation)
+    print("Cosine score: ")
+    println(nearest.similarity)
+    if path != null and strlen(path) > 0 {
+        if !chimera_semantic_save(path) {
+            println("Failed to persist semantic memory")
+            chimera_semantic_shutdown()
+            return 5
+        }
+    }
+    chimera_semantic_shutdown()
+    return 0
+}

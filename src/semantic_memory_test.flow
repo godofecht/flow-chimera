@@ -1,0 +1,65 @@
+import "semantic_memory.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+    function remove(path: string) -> i32
+    function fopen(path: string, mode: string) -> ptr<void>
+    function fputc(byte: i32, fp: ptr<void>) -> i32
+    function fclose(fp: ptr<void>) -> i32
+}
+
+function equal(a: string, b: string) -> bool {
+    return strcmp(a, b) == 0
+}
+
+function main() -> i32 {
+    if !chimera_semantic_init() { return 1 }
+    let mut cat: array<f64, 1024> = []
+    let mut dog: array<f64, 1024> = []
+    let mut invalid: array<f64, 1024> = []
+    cat[17] = 1.0
+    dog[33] = 1.0
+    if chimera_semantic_remember("invalid", "", "", &invalid[0], 1024) { return 2 }
+    if !chimera_semantic_remember("cat", "observe", "meow", &cat[0], 1024) { return 3 }
+    if !chimera_semantic_remember("dog", "observe", "bark", &dog[0], 1024) { return 4 }
+    if chimera_semantic_count() != 2 { return 5 }
+    let cat_match: SemanticMatch = chimera_semantic_recall(&cat[0], 1024, 0)
+    if !cat_match.found or !equal(cat_match.observation, "cat") or cat_match.dimension != 1024 { return 6 }
+    if cat_match.similarity < 0.999 { return 7 }
+    let other: SemanticMatch = chimera_semantic_recall(&cat[0], 1024, 1)
+    if !other.found or !equal(other.observation, "dog") { return 8 }
+    if chimera_semantic_recall(&cat[0], 1024, 2).found { return 9 }
+    let mut three: array<f64, 3> = [0.0, 0.0, 1.0]
+    if !chimera_semantic_remember("three", "observe", "small", &three[0], 3) { return 10 }
+    if !equal(chimera_semantic_recall(&three[0], 3, 0).observation, "three") { return 11 }
+    if !equal(chimera_semantic_recall(&cat[0], 1024, 0).observation, "cat") { return 12 }
+    if chimera_semantic_recall(&invalid[0], 1024, 0).found { return 13 }
+    for i in 0 to 64 {
+        if !chimera_semantic_remember("new", "observe", "ok", &cat[0], 1024) { return 14 }
+    }
+    if chimera_semantic_count() != 64 { return 15 }
+    if !equal(chimera_semantic_recall(&cat[0], 1024, 0).observation, "new") { return 16 }
+    if chimera_semantic_recall(&three[0], 3, 0).found { return 17 }
+    let snapshot: string = "/tmp/flow_chimera_semantic_snapshot.bin"
+    if !chimera_semantic_save(snapshot) { return 20 }
+    chimera_semantic_clear()
+    if chimera_semantic_count() != 0 { return 21 }
+    if !chimera_semantic_load(snapshot) { return 22 }
+    if chimera_semantic_count() != 64 { return 23 }
+    if !equal(chimera_semantic_recall(&cat[0], 1024, 0).observation, "new") { return 24 }
+    let fp: ptr<void> = fopen(snapshot, "wb")
+    if fp == null { return 25 }
+    if fputc(0, fp) < 0 { return 26 }
+    if fclose(fp) != 0 { return 27 }
+    if chimera_semantic_load(snapshot) { return 28 }
+    if chimera_semantic_count() != 64 { return 29 }
+    if !equal(chimera_semantic_recall(&cat[0], 1024, 0).observation, "new") { return 30 }
+    let _deleted: i32 = remove(snapshot)
+    chimera_semantic_clear()
+    if chimera_semantic_count() != 0 { return 18 }
+    chimera_semantic_shutdown()
+    if !chimera_semantic_init() { return 19 }
+    chimera_semantic_shutdown()
+    println("PASS: full-dimensional semantic memory cosine ranking and eviction")
+    return 0
+}

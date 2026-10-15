@@ -7,7 +7,7 @@ extern {
     function strcmp(a: string, b: string) -> i32
 }
 
-const JSON_LIMIT: i32 = 32768
+const JSON_LIMIT: i32 = 131072
 const JSON_DEPTH: i32 = 32
 
 struct ParsedAction {
@@ -379,4 +379,72 @@ export function chimera_gemini_text(json: string) -> string {
     let decoded: string = j_decode(txt)
     if decoded == null { return "" }
     return decoded
+}
+
+
+# Parses the actual numeric vector returned by Ollama /api/embed (or legacy
+# /api/embeddings), rejecting malformed content and non-finite values.
+# A caller-provided output buffer is modified only after full validation.
+extern {
+    function strtod(text: string, endptr: ptr<string>) -> f64
+}
+
+export struct OllamaEmbeddingDecode {
+    ok: bool,
+    dimensions: i32
+}
+
+export function chimera_ollama_embedding_decode(json: string, output: ptr<f64>, capacity: i32) -> OllamaEmbeddingDecode {
+    let invalid: OllamaEmbeddingDecode = OllamaEmbeddingDecode {ok: false, dimensions: 0}
+    if output == null or capacity < 1 or capacity > 4096 or json == null { return invalid }
+    if !j_load(json) or j_source[j_ws(0)] != 123 { return invalid }
+    let root: i32 = j_ws(0)
+    let mut vector_at: i32 = j_field(root, "embedding")
+    if vector_at < 0 {
+        let vectors_at: i32 = j_field(root, "embeddings")
+        if vectors_at < 0 or j_source[vectors_at] != 91 { return invalid }
+        vector_at = j_item(vectors_at, 0)
+        if j_item(vectors_at, 1) >= 0 { return invalid }
+    }
+    if vector_at < 0 or j_source[vector_at] != 91 { return invalid }
+    let scratch: ptr<f64> = calloc(capacity as i64, 8) as ptr<f64>
+    if scratch == null { return invalid }
+    let mut at: i32 = j_ws(vector_at + 1)
+    let mut count: i32 = 0
+    let mut magnitude: f64 = 0.0
+    let mut ok: bool = at < j_size and j_source[at] != 93
+    while ok and at < j_size and j_source[at] != 93 {
+        if count >= capacity { ok = false }
+        if ok {
+            let end: i32 = j_number_end(at)
+            if end <= at or end - at > 128 { ok = false }
+            if ok {
+                let mut token: array<u8, 129> = []
+                for i in 0 to end - at { token[i] = j_source[at + i] }
+                token[end - at] = 0
+                let value: f64 = strtod(&token[0] as string, null)
+                if value != value or value < -1000000.0 or value > 1000000.0 {
+                    ok = false
+                } else {
+                    scratch[count] = value
+                    magnitude = magnitude + value * value
+                    count = count + 1
+                    at = j_ws(end)
+                    if at < j_size and j_source[at] == 44 {
+                        at = j_ws(at + 1)
+                        if at >= j_size or j_source[at] == 93 { ok = false }
+                    } elif at >= j_size or j_source[at] != 93 {
+                        ok = false
+                    }
+                }
+            }
+        }
+    }
+    if !ok or at >= j_size or count == 0 or magnitude <= 0.0 {
+        free(scratch as ptr<void>)
+        return invalid
+    }
+    for i in 0 to count { output[i] = scratch[i] }
+    free(scratch as ptr<void>)
+    return OllamaEmbeddingDecode {ok: true, dimensions: count}
 }

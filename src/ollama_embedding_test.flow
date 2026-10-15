@@ -1,0 +1,24 @@
+import "protocol.flow"
+
+function main() -> i32 {
+    let mut vector: array<f64, 4> = [99.0, 99.0, 99.0, 99.0]
+    let valid: OllamaEmbeddingDecode = chimera_ollama_embedding_decode("{\"embeddings\":[[0.25,-0.5,0.75]]}", &vector[0], 4)
+    if !valid.ok or valid.dimensions != 3 { return 1 }
+    if vector[0] != 0.25 or vector[1] != -0.5 or vector[2] != 0.75 or vector[3] != 99.0 { return 2 }
+    let legacy: OllamaEmbeddingDecode = chimera_ollama_embedding_decode("{\"embedding\":[1e0,2,3]}", &vector[0], 4)
+    if !legacy.ok or legacy.dimensions != 3 or vector[1] != 2.0 { return 3 }
+    if chimera_ollama_embedding_decode("{\"embeddings\":[[]]}", &vector[0], 4).ok { return 4 }
+    if chimera_ollama_embedding_decode("{\"embeddings\":[[0,0,0]]}", &vector[0], 4).ok { return 5 }
+    if chimera_ollama_embedding_decode("{\"embeddings\":[[1,2,3,4,5]]}", &vector[0], 4).ok { return 6 }
+    if chimera_ollama_embedding_decode("{\"embeddings\":[[1,2],[3,4]]}", &vector[0], 4).ok { return 7 }
+    if chimera_ollama_embedding_decode("{\"embeddings\":[[1,\"2\",3]]}", &vector[0], 4).ok { return 8 }
+    if chimera_ollama_embedding_decode("{\"embeddings\":[[1e999]]}", &vector[0], 4).ok { return 9 }
+    if chimera_ollama_embedding_decode("{\"embedding\":[1,2,3,]}", &vector[0], 4).ok { return 10 }
+    if chimera_ollama_embedding_decode("{\"embedding\":[1,2,3]}", &vector[0], 2).ok { return 11 }
+    if vector[0] != 1.0 or vector[1] != 2.0 or vector[2] != 3.0 or vector[3] != 99.0 { return 12 }
+    if chimera_ollama_embedding_decode("{\"embedding\":[1]}", null, 4).ok { return 13 }
+    if chimera_ollama_embedding_decode("{\"embedding\":[1]}", &vector[0], 0).ok { return 14 }
+    chimera_json_release()
+    println("PASS: bounded Ollama embedding response decoder")
+    return 0
+}

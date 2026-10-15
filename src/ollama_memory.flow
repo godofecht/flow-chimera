@@ -1,0 +1,40 @@
+# Bridge real local Ollama-generated embeddings into the full-dimensional
+# bounded and persistable semantic memory. Neither side projects to 8D.
+# The caller must initialize/shutdown chimera_semantic_* explicitly.
+import "ollama_provider.flow"
+import "semantic_memory.flow"
+
+extern {
+    function calloc(count: i64, width: i64) -> ptr<void>
+    function free(memory: ptr<void>) -> void
+}
+
+const OLLAMA_VECTOR_CAP: i32 = 4096
+
+export function chimera_ollama_remember(observation: string, action: string, outcome: string) -> bool {
+    let vector: ptr<f64> = calloc(OLLAMA_VECTOR_CAP as i64, 8) as ptr<f64>
+    if vector == null { return false }
+    let embedded: OllamaEmbeddingDecode = chimera_ollama_embed(observation, vector, OLLAMA_VECTOR_CAP)
+    let mut stored: bool = false
+    if embedded.ok {
+        stored = chimera_semantic_remember(observation, action, outcome, vector, embedded.dimensions)
+    }
+    free(vector as ptr<void>)
+    return stored
+}
+
+export function chimera_ollama_recall_text(query: string, rank: i32) -> SemanticMatch {
+    let not_found: SemanticMatch = SemanticMatch {
+        found: false, observation: "", action: "", outcome: "",
+        similarity: -2.0, dimension: 0
+    }
+    let vector: ptr<f64> = calloc(OLLAMA_VECTOR_CAP as i64, 8) as ptr<f64>
+    if vector == null { return not_found }
+    let embedded: OllamaEmbeddingDecode = chimera_ollama_embed(query, vector, OLLAMA_VECTOR_CAP)
+    let mut result: SemanticMatch = not_found
+    if embedded.ok {
+        result = chimera_semantic_recall(vector, embedded.dimensions, rank)
+    }
+    free(vector as ptr<void>)
+    return result
+}

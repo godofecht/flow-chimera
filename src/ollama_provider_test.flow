@@ -1,0 +1,58 @@
+import "ollama_provider.flow"
+import "chimera.flow"
+import "ollama_memory.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+    function strstr(haystack: string, needle: string) -> ptr<u8>
+}
+
+function main() -> i32 {
+    if !chimera_ollama_url_valid("http://127.0.0.1:18764/api/embed") { return 1 }
+    if chimera_ollama_url_valid("http://localhost:11434/api/embed") { return 2 }
+    if chimera_ollama_url_valid("http://localhost.evil.invalid:11434/api/embed") { return 3 }
+    if chimera_ollama_url_valid("http://127.0.0.1:11434@evil.invalid/api/embed") { return 4 }
+    if chimera_ollama_url_valid("http://127.0.0.1:0/api/embed") { return 5 }
+    if chimera_ollama_url_valid("http://127.0.0.1:65536/api/embed") { return 6 }
+    if chimera_ollama_url_valid("http://127.0.0.1:11434/admin") { return 7 }
+    if chimera_ollama_url_valid("https://evil.invalid/api/embed") { return 8 }
+    if !chimera_ollama_model_valid("qwen3-embedding:0.6b") { return 9 }
+    if chimera_ollama_model_valid("bad model") { return 10 }
+    if chimera_ollama_model_valid("--verbose") { return 11 }
+
+    let request: string = chimera_ollama_request("qwen3-embedding:0.6b", "say \"hi\"\nplease")
+    if request == null { return 12 }
+    if strstr(request, "\\\"hi\\\"") == null { return 13 }
+    if strstr(request, "\\nplease") == null { return 14 }
+    chimera_ollama_free(request)
+
+    let mut vector: array<f64, 8> = [99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0]
+    let fetched: OllamaEmbeddingDecode = chimera_ollama_embed("Cat on the sofa", &vector[0], 8)
+    if !fetched.ok or fetched.dimensions != 8 { return 15 }
+    if vector[0] != 0.9 or vector[1] != 0.1 { return 16 }
+    if !chimera_init() { return 17 }
+    if !chimera_remember_vector("cat", "observe", "meow", &vector[0], 8) { return 18 }
+    let dog: OllamaEmbeddingDecode = chimera_ollama_embed("Dog", &vector[0], 8)
+    if !dog.ok or dog.dimensions != 8 { return 19 }
+    if !chimera_remember_vector("dog", "observe", "bark", &vector[0], 8) { return 20 }
+    let cat_again: OllamaEmbeddingDecode = chimera_ollama_embed("cat", &vector[0], 8)
+    if !cat_again.ok { return 21 }
+    let nearest: VectorMatch = chimera_recall_vector(&vector[0], 8, 0)
+    if strcmp(nearest.observation, "cat") != 0 { return 22 }
+    chimera_shutdown()
+    if !chimera_semantic_init() { return 23 }
+    if !chimera_ollama_remember("Cat", "observe", "meow") { return 24 }
+    if !chimera_ollama_remember("Dog", "observe", "bark") { return 25 }
+    let memory: SemanticMatch = chimera_ollama_recall_text("cat under the table", 0)
+    if !memory.found or strcmp(memory.observation, "Cat") != 0 { return 26 }
+    if memory.dimension != 8 or memory.similarity < 0.9 { return 27 }
+    let path: string = "/tmp/chimera_ollama_full_vector_snapshot.bin"
+    if !chimera_semantic_save(path) { return 28 }
+    chimera_semantic_clear()
+    if !chimera_semantic_load(path) { return 29 }
+    if strcmp(chimera_ollama_recall_text("dog", 0).observation, "Dog") != 0 { return 30 }
+    chimera_semantic_shutdown()
+    chimera_json_release()
+    println("PASS: real loopback HTTP Ollama JSON embedding and 8D episodic recall")
+    return 0
+}
