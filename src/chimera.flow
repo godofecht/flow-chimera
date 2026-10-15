@@ -10,6 +10,12 @@ extern {
     function strcmp(a: string, b: string) -> i32
     function strstr(haystack: ptr<u8>, needle: ptr<u8>) -> ptr<u8>
     function sqrt(value: f64) -> f64
+    function fopen(path: string, mode: string) -> ptr<void>
+    function fclose(fp: ptr<void>) -> i32
+    function fread(buf: ptr<u8>, size: i64, count: i64, fp: ptr<void>) -> i64
+    function fwrite(buf: ptr<u8>, size: i64, count: i64, fp: ptr<void>) -> i64
+    function fgetc(fp: ptr<void>) -> i32
+    function fputc(c: i32, fp: ptr<void>) -> i32
 }
 
 const WORK_CAP: i32 = 20
@@ -506,4 +512,291 @@ export function chimera_step(observation: string, action: string, payload: strin
 
 export function chimera_steps() -> i32 {
     return total_steps
+}
+
+# Versioned, bounded binary snapshot. FCH2 uses little-endian unsigned
+# 32-bit counts and native IEEE-754 doubles (Tier-1 hosts are little endian).
+# The entire file is validated into temporary storage before live state changes.
+struct SnapshotText {
+    ok: bool,
+    data: string
+}
+
+struct SnapshotStage {
+    work: ptr<string>,
+    observations: ptr<string>,
+    actions: ptr<string>,
+    outcomes: ptr<string>,
+    decisions: ptr<string>,
+    confidences: ptr<f64>,
+    loads: ptr<f64>,
+    focus: ptr<f64>,
+    vectors: ptr<f64>,
+    valid: ptr<i32>
+}
+
+function snapshot_new_stage() -> SnapshotStage {
+    return SnapshotStage {
+        work: calloc(WORK_CAP as i64, 8) as ptr<string>,
+        observations: calloc(EPISODE_CAP as i64, 8) as ptr<string>,
+        actions: calloc(EPISODE_CAP as i64, 8) as ptr<string>,
+        outcomes: calloc(EPISODE_CAP as i64, 8) as ptr<string>,
+        decisions: calloc(STATE_CAP as i64, 8) as ptr<string>,
+        confidences: calloc(STATE_CAP as i64, 8) as ptr<f64>,
+        loads: calloc(STATE_CAP as i64, 8) as ptr<f64>,
+        focus: calloc(STATE_CAP as i64, 8) as ptr<f64>,
+        vectors: calloc((EPISODE_CAP * VECTOR_DIM) as i64, 8) as ptr<f64>,
+        valid: calloc(EPISODE_CAP as i64, 4) as ptr<i32>
+    }
+}
+
+function snapshot_stage_ready(st: SnapshotStage) -> bool {
+    return st.work != null and st.observations != null and st.actions != null and st.outcomes != null and st.decisions != null and st.confidences != null and st.loads != null and st.focus != null and st.vectors != null and st.valid != null
+}
+
+function snapshot_free_stage(st: SnapshotStage) -> void {
+    if st.work != null {
+        for i in 0 to WORK_CAP { dispose_owned(st.work[i]) }
+        free(st.work as ptr<void>)
+    }
+    if st.observations != null {
+        for i in 0 to EPISODE_CAP { dispose_owned(st.observations[i]) }
+        free(st.observations as ptr<void>)
+    }
+    if st.actions != null {
+        for i in 0 to EPISODE_CAP { dispose_owned(st.actions[i]) }
+        free(st.actions as ptr<void>)
+    }
+    if st.outcomes != null {
+        for i in 0 to EPISODE_CAP { dispose_owned(st.outcomes[i]) }
+        free(st.outcomes as ptr<void>)
+    }
+    if st.decisions != null {
+        for i in 0 to STATE_CAP { dispose_owned(st.decisions[i]) }
+        free(st.decisions as ptr<void>)
+    }
+    if st.confidences != null { free(st.confidences as ptr<void>) }
+    if st.loads != null { free(st.loads as ptr<void>) }
+    if st.focus != null { free(st.focus as ptr<void>) }
+    if st.vectors != null { free(st.vectors as ptr<void>) }
+    if st.valid != null { free(st.valid as ptr<void>) }
+}
+
+function snapshot_write_i32(fp: ptr<void>, number: i32) -> bool {
+    if number < 0 { return false }
+    let mut value: i32 = number
+    for i in 0 to 4 {
+        if fputc(value % 256, fp) < 0 { return false }
+        value = value / 256
+    }
+    return true
+}
+
+function snapshot_read_i32(fp: ptr<void>) -> i32 {
+    let mut value: i64 = 0
+    let mut multiplier: i64 = 1
+    for i in 0 to 4 {
+        let byte: i32 = fgetc(fp)
+        if byte < 0 { return -1 }
+        value = value + (byte as i64) * multiplier
+        multiplier = multiplier * 256
+    }
+    if value > 2147483647 { return -1 }
+    return value as i32
+}
+
+# Each UTF-8 string is length-prefixed and limited to 8192 bytes.
+function snapshot_write_text(fp: ptr<void>, value: string) -> bool {
+    if value == null { return false }
+    let n: i64 = strlen(value)
+    if n > 8192 { return false }
+    if !snapshot_write_i32(fp, n as i32) { return false }
+    if n == 0 { return true }
+    return fwrite(value as ptr<u8>, 1, n, fp) == n
+}
+
+function snapshot_read_text(fp: ptr<void>) -> SnapshotText {
+    let n: i32 = snapshot_read_i32(fp)
+    if n < 0 or n > 8192 {
+        return SnapshotText { ok: false, data: "" }
+    }
+    let buf: ptr<u8> = calloc((n + 1) as i64, 1) as ptr<u8>
+    if buf == null {
+        return SnapshotText { ok: false, data: "" }
+    }
+    if n > 0 {
+        if fread(buf, 1, n as i64, fp) != n as i64 {
+            free(buf as ptr<void>)
+            return SnapshotText { ok: false, data: "" }
+        }
+    }
+    if strlen(buf as string) != n as i64 {
+        free(buf as ptr<void>)
+        return SnapshotText { ok: false, data: "" }
+    }
+    return SnapshotText { ok: true, data: buf as string }
+}
+
+# Saves working memory, episodes with optional embeddings, cognition history,
+# step count and reflection settings. Only the caller chooses the path.
+export function chimera_snapshot_save(path: string) -> bool {
+    if !ready or path == null or strcmp(path, "") == 0 { return false }
+    let fp: ptr<void> = fopen(path, "wb")
+    if fp == null { return false }
+    let mut ok: bool = fwrite("FCH2" as ptr<u8>, 1, 4, fp) == 4
+    if ok { ok = snapshot_write_i32(fp, work_size) }
+    if ok { ok = snapshot_write_i32(fp, episode_size) }
+    if ok { ok = snapshot_write_i32(fp, state_size) }
+    if ok { ok = snapshot_write_i32(fp, total_steps) }
+    if ok { ok = snapshot_write_i32(fp, reflection_frequency) }
+    if ok {
+        let mut enabled: i32 = 0
+        if monitoring_enabled { enabled = 1 }
+        ok = snapshot_write_i32(fp, enabled)
+    }
+    for i in 0 to work_size {
+        if ok { ok = snapshot_write_text(fp, chimera_work_get(i)) }
+    }
+    for i in 0 to episode_size {
+        if ok {
+            let physical: i32 = (episode_next - episode_size + i + EPISODE_CAP) % EPISODE_CAP
+            ok = snapshot_write_text(fp, episode_observations[physical])
+            if ok { ok = snapshot_write_text(fp, episode_actions[physical]) }
+            if ok { ok = snapshot_write_text(fp, episode_outcomes[physical]) }
+            if ok { ok = snapshot_write_i32(fp, episode_vector_valid[physical]) }
+            if ok and episode_vector_valid[physical] != 0 {
+                ok = fwrite((&episode_vectors[physical * VECTOR_DIM]) as ptr<u8>, 1, 64, fp) == 64
+            }
+        }
+    }
+    for i in 0 to state_size {
+        if ok {
+            let physical: i32 = (state_next - state_size + i + STATE_CAP) % STATE_CAP
+            ok = snapshot_write_text(fp, state_decisions[physical])
+            if ok { ok = fwrite((&state_confidences[physical]) as ptr<u8>, 1, 8, fp) == 8 }
+            if ok { ok = fwrite((&state_loads[physical]) as ptr<u8>, 1, 8, fp) == 8 }
+            if ok { ok = fwrite((&state_focus[physical]) as ptr<u8>, 1, 8, fp) == 8 }
+        }
+    }
+    let closed: i32 = fclose(fp)
+    return ok and closed == 0
+}
+
+# A corrupted/truncated file leaves the existing runtime unchanged.
+# If allocations fail while committing a valid snapshot, the function returns
+# false; in that exceptional case the in-memory state may be partly restored.
+export function chimera_snapshot_load(path: string) -> bool {
+    if !ready or path == null or strcmp(path, "") == 0 { return false }
+    let fp: ptr<void> = fopen(path, "rb")
+    if fp == null { return false }
+    let mut magic: array<u8, 4> = [0, 0, 0, 0]
+    let mut ok: bool = fread(&magic[0], 1, 4, fp) == 4
+    if ok { ok = magic[0] == 70 and magic[1] == 67 and magic[2] == 72 and magic[3] == 50 }
+    let mut w_count: i32 = -1
+    let mut e_count: i32 = -1
+    let mut s_count: i32 = -1
+    let mut steps: i32 = -1
+    let mut period: i32 = -1
+    let mut enabled: i32 = -1
+    if ok {
+        w_count = snapshot_read_i32(fp)
+        e_count = snapshot_read_i32(fp)
+        s_count = snapshot_read_i32(fp)
+        steps = snapshot_read_i32(fp)
+        period = snapshot_read_i32(fp)
+        enabled = snapshot_read_i32(fp)
+        ok = w_count >= 0 and w_count <= WORK_CAP and e_count >= 0 and e_count <= EPISODE_CAP and s_count >= 0 and s_count <= STATE_CAP and steps >= 0 and period > 0 and (enabled == 0 or enabled == 1)
+    }
+    let st: SnapshotStage = snapshot_new_stage()
+    if !snapshot_stage_ready(st) { ok = false }
+    if ok {
+        for i in 0 to w_count {
+            if ok {
+                let r: SnapshotText = snapshot_read_text(fp)
+                if !r.ok { ok = false } else { st.work[i] = r.data }
+            }
+        }
+        for i in 0 to e_count {
+            if ok {
+                let a: SnapshotText = snapshot_read_text(fp)
+                if !a.ok { ok = false } else { st.observations[i] = a.data }
+            }
+            if ok {
+                let b: SnapshotText = snapshot_read_text(fp)
+                if !b.ok { ok = false } else { st.actions[i] = b.data }
+            }
+            if ok {
+                let c: SnapshotText = snapshot_read_text(fp)
+                if !c.ok { ok = false } else { st.outcomes[i] = c.data }
+            }
+            if ok {
+                st.valid[i] = snapshot_read_i32(fp)
+                if st.valid[i] != 0 and st.valid[i] != 1 { ok = false }
+            }
+            if ok and st.valid[i] == 1 {
+                if fread((&st.vectors[i * VECTOR_DIM]) as ptr<u8>, 1, 64, fp) != 64 { ok = false }
+                let mut norm: f64 = 0.0
+                for j in 0 to VECTOR_DIM {
+                    let x: f64 = st.vectors[i * VECTOR_DIM + j]
+                    if x != x or x > 1.0e100 or x < -1.0e100 { ok = false }
+                    norm = norm + x * x
+                }
+                if norm <= 0.0 { ok = false }
+            }
+        }
+        for i in 0 to s_count {
+            if ok {
+                let d: SnapshotText = snapshot_read_text(fp)
+                if !d.ok { ok = false } else { st.decisions[i] = d.data }
+            }
+            if ok {
+                if fread((&st.confidences[i]) as ptr<u8>, 1, 8, fp) != 8 { ok = false }
+            }
+            if ok {
+                if fread((&st.loads[i]) as ptr<u8>, 1, 8, fp) != 8 { ok = false }
+            }
+            if ok {
+                if fread((&st.focus[i]) as ptr<u8>, 1, 8, fp) != 8 { ok = false }
+            }
+            if ok {
+                let c: f64 = st.confidences[i]
+                let l: f64 = st.loads[i]
+                let f: f64 = st.focus[i]
+                if c != c or l != l or f != f or c < 0.0 or c > 1.0 or l < 0.0 or l > 1.0 or f < 0.0 or f > 1.0 { ok = false }
+            }
+        }
+    }
+    if ok { ok = fgetc(fp) == -1 }
+    let close_result: i32 = fclose(fp)
+    if close_result != 0 { ok = false }
+    if ok {
+        chimera_work_clear()
+        chimera_episode_clear()
+        for i in 0 to STATE_CAP {
+            dispose_owned(state_decisions[i])
+            state_decisions[i] = null
+        }
+        state_next = 0
+        state_size = 0
+        for i in 0 to w_count {
+            if !chimera_work_add(st.work[i]) { ok = false }
+        }
+        for i in 0 to e_count {
+            if st.valid[i] == 1 {
+                if !chimera_remember_vector(st.observations[i], st.actions[i], st.outcomes[i], &st.vectors[i * VECTOR_DIM], VECTOR_DIM) { ok = false }
+            } else {
+                if !chimera_remember(st.observations[i], st.actions[i], st.outcomes[i]) { ok = false }
+            }
+        }
+        for i in 0 to s_count {
+            if !chimera_record_state(st.decisions[i], st.confidences[i], st.loads[i], st.focus[i]) { ok = false }
+        }
+        if ok {
+            total_steps = steps
+            reflection_frequency = period
+            monitoring_enabled = enabled == 1
+        }
+    }
+    snapshot_free_stage(st)
+    return ok
 }
