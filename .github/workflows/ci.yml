@@ -17,4 +17,5 @@ jobs:
         run: |
           ./flow-toolchain/flow version
           ./flow-toolchain/flow run src/chimera_test.flow
+          ./flow-toolchain/flow run src/parity_test.flow
           ./flow-toolchain/flow run src/demo.flow
