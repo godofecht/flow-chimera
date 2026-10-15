@@ -1,0 +1,25 @@
+import "protocol.flow"
+import "provider.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+}
+
+function eq(a: string, b: string) -> bool { return strcmp(a,b) == 0 }
+
+function main() -> i32 {
+    let empty: string = chimera_gemini_text("{\"candidates\":[]}")
+    if !eq(empty, "") { return 1 }
+    let good: string = chimera_gemini_text("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"answer\\nline\"}]}}]}")
+    if !eq(good, "answer\nline") { return 2 }
+    let req: string = chimera_gemini_request("hello \"world\"\n!", 0.7)
+    if req == null { return 3 }
+    if !eq(chimera_gemini_text(req), "") { return 4 }
+    chimera_provider_free(req)
+    let missing: ProviderResult = chimera_gemini_post("")
+    if missing.success { return 5 }
+    if missing.byte_count != 0 { return 6 }
+    chimera_json_release()
+    println("PASS: Gemini JSON extraction and request encoding")
+    return 0
+}
