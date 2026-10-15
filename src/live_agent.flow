@@ -88,7 +88,18 @@ export function chimera_live_step(observation: string, temperature: f64, confide
         chimera_provider_free(answer.body)
         return ToolResult {success: false, should_exit: false, output: "gemini_candidate_missing", number: 0}
     }
-    let outcome: ToolResult = chimera_step_json(observation, generated, confidence, load, focus)
+    # Parsing another JSON document reuses the protocol scratch arena;
+    # freeze the generated text before handing it to the action decoder.
+    let len: i32 = strlen(generated) as i32
+    let frozen: ptr<u8> = calloc((len + 1) as i64, 1) as ptr<u8>
+    if frozen == null {
+        chimera_provider_free(answer.body)
+        return ToolResult {success: false, should_exit: false, output: "candidate_allocation_failed", number: 0}
+    }
+    let source: ptr<u8> = generated as ptr<u8>
+    for i in 0 to len { frozen[i] = source[i] }
+    let outcome: ToolResult = chimera_step_json(observation, frozen as string, confidence, load, focus)
+    free(frozen as ptr<void>)
     chimera_provider_free(answer.body)
     return outcome
 }
