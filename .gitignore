@@ -1,0 +1,6 @@
+.flow/
+.flow-cache/
+build/
+dist/
+*.o
+*.out
