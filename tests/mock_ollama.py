@@ -12,7 +12,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"ok")
 
     def do_POST(self):
-        if self.path != "/api/embed":
+        if self.path not in ("/api/embed", "/api/generate"):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
@@ -23,6 +23,24 @@ class Handler(BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length))
         except (ValueError, TypeError):
             self.send_error(400)
+            return
+        if self.path == "/api/generate":
+            if request.get("model") != "qwen2.5:7b" or request.get("stream") is not False:
+                self.send_error(400)
+                return
+            if request.get("format") != "json" or not isinstance(request.get("prompt"), str):
+                self.send_error(400)
+                return
+            if not request["prompt"]:
+                self.send_error(400)
+                return
+            generated = json.dumps({"tool_name": "sum_numbers", "arguments": {"a": 5, "b": 10}})
+            body = json.dumps({"model": request["model"], "done": True, "response": generated}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if request.get("model") != "qwen3-embedding:0.6b":
             self.send_error(400)
