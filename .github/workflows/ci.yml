@@ -22,3 +22,14 @@ jobs:
           ./flow-toolchain/flow run src/protocol_test.flow
           ./flow-toolchain/flow run src/provider_test.flow
           ./flow-toolchain/flow run src/demo.flow
+
+      - name: Local Gemini-compatible integration
+        env:
+          CHIMERA_LLM_API_KEY: integration-test-key
+          CHIMERA_LLM_API_URL: http://127.0.0.1:18763/generate
+        run: |
+          python3 tests/mock_gemini.py &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          curl --silent --show-error --fail --retry 8 --retry-delay 1 --retry-connrefused http://127.0.0.1:18763/health
+          ./flow-toolchain/flow run src/live_test.flow
