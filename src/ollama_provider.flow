@@ -41,25 +41,12 @@ function ollama_http_fail() -> OllamaHttpResult {
 export function chimera_ollama_url_valid(url: string) -> bool {
     if url == null { return false }
     let n: i32 = strlen(url) as i32
-    let prefix_a: string = "http://127.0.0.1:"
-    let prefix_b: string = "http://localhost:"
+    let prefix: ptr<u8> = "http://127.0.0.1:" as ptr<u8>
     let p: ptr<u8> = url as ptr<u8>
-    let a: ptr<u8> = prefix_a as ptr<u8>
-    let b: ptr<u8> = prefix_b as ptr<u8>
     if n < 28 or n > 96 { return false }
-    let mut host_ok: bool = true
     for i in 0 to 17 {
-        if p[i] != a[i] and p[i] != b[i] { host_ok = false }
+        if p[i] != prefix[i] { return false }
     }
-    if !host_ok { return false }
-    # The entire prefix must be A or B; mixing characters isn't allowed.
-    let mut is_a: bool = true
-    let mut is_b: bool = true
-    for i in 0 to 17 {
-        if p[i] != a[i] { is_a = false }
-        if p[i] != b[i] { is_b = false }
-    }
-    if !is_a and !is_b { return false }
     let mut port: i32 = 0
     let mut at: i32 = 17
     let mut digits: i32 = 0
@@ -85,6 +72,7 @@ export function chimera_ollama_model_valid(model: string) -> bool {
     let n: i32 = strlen(model) as i32
     if n < 1 or n > 128 { return false }
     let p: ptr<u8> = model as ptr<u8>
+    if p[0] == 45 or p[0] == 46 or p[0] == 95 or p[0] == 58 { return false }
     for i in 0 to n {
         let c: u8 = p[i]
         if !((c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 45 or c == 46 or c == 95 or c == 58) {
