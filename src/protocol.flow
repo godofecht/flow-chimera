@@ -7,7 +7,7 @@ extern {
     function strcmp(a: string, b: string) -> i32
 }
 
-const JSON_LIMIT: i32 = 32768
+const JSON_LIMIT: i32 = 131072
 const JSON_DEPTH: i32 = 32
 
 struct ParsedAction {
