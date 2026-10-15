@@ -74,11 +74,19 @@ export function chimera_shutdown() -> void {
     if episode_observations != null {
         for i in 0 to EPISODE_CAP {
             dispose_owned(episode_observations[i])
-            dispose_owned(episode_actions[i])
-            dispose_owned(episode_outcomes[i])
         }
         free(episode_observations as ptr<void>)
+    }
+    if episode_actions != null {
+        for i in 0 to EPISODE_CAP {
+            dispose_owned(episode_actions[i])
+        }
         free(episode_actions as ptr<void>)
+    }
+    if episode_outcomes != null {
+        for i in 0 to EPISODE_CAP {
+            dispose_owned(episode_outcomes[i])
+        }
         free(episode_outcomes as ptr<void>)
     }
     if state_decisions != null {
@@ -86,10 +94,10 @@ export function chimera_shutdown() -> void {
             dispose_owned(state_decisions[i])
         }
         free(state_decisions as ptr<void>)
-        free(state_confidences as ptr<void>)
-        free(state_loads as ptr<void>)
-        free(state_focus as ptr<void>)
     }
+    if state_confidences != null { free(state_confidences as ptr<void>) }
+    if state_loads != null { free(state_loads as ptr<void>) }
+    if state_focus != null { free(state_focus as ptr<void>) }
     work_records = null
     episode_observations = null
     episode_actions = null
