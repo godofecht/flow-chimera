@@ -8,6 +8,16 @@ extern {
 function eq(a: string, b: string) -> bool { return strcmp(a,b) == 0 }
 
 function main() -> i32 {
+    if !chimera_provider_url_valid("https://generativelanguage.googleapis.com/v1beta/models/test:generateContent") { return 10 }
+    if !chimera_provider_url_valid("http://127.0.0.1") { return 11 }
+    if !chimera_provider_url_valid("http://localhost:18763/generate") { return 12 }
+    if chimera_provider_url_valid("http://localhost.evil.invalid/generate") { return 13 }
+    if chimera_provider_url_valid("http://127.0.0.1.evil.invalid/generate") { return 14 }
+    if chimera_provider_url_valid("http://localhost:80@evil.invalid/") { return 15 }
+    if chimera_provider_url_valid("http://localhost:65536/") { return 16 }
+    if chimera_provider_url_valid("http://localhost:0/") { return 17 }
+    if chimera_provider_url_valid("http://localhost:/") { return 18 }
+    if chimera_provider_url_valid("http://localhost/\n") { return 19 }
     let empty: string = chimera_gemini_text("{\"candidates\":[]}")
     if !eq(empty, "") { return 1 }
     let good: string = chimera_gemini_text("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"answer\\nline\"}]}}]}")
