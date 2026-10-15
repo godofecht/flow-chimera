@@ -1,0 +1,159 @@
+# Explicit host tool registry, keeping arbitrary network, filesystem and
+# process side effects outside the Flow core. Models cannot enable tools.
+import "chimera.flow"
+
+extern {
+    function calloc(count: i64, width: i64) -> ptr<void>
+    function free(memory: ptr<void>) -> void
+    function strlen(value: string) -> i64
+    function strcpy(dest: ptr<u8>, src: ptr<u8>) -> ptr<u8>
+    function strcmp(a: string, b: string) -> i32
+}
+
+const HOST_TOOL_CAP: i32 = 16
+
+export struct HostTool {
+    found: bool,
+    enabled: bool,
+    effect_class: i32,
+    name: string,
+    schema: string
+}
+
+let mut host_ready: bool = false
+let mut host_count: i32 = 0
+let mut host_names: ptr<string> = null
+let mut host_schemas: ptr<string> = null
+let mut host_capabilities: ptr<i32> = null
+let mut host_enabled: ptr<i32> = null
+
+function host_copy(value: string) -> string {
+    let dest: ptr<u8> = calloc(strlen(value) + 1, 1) as ptr<u8>
+    if dest == null { return null }
+    strcpy(dest, value as ptr<u8>)
+    return dest as string
+}
+
+export function chimera_tools_shutdown() -> void {
+    if host_names != null {
+        for i in 0 to HOST_TOOL_CAP {
+            if host_names[i] != null { free(host_names[i] as ptr<void>) }
+        }
+        free(host_names as ptr<void>)
+    }
+    if host_schemas != null {
+        for i in 0 to HOST_TOOL_CAP {
+            if host_schemas[i] != null { free(host_schemas[i] as ptr<void>) }
+        }
+        free(host_schemas as ptr<void>)
+    }
+    if host_capabilities != null { free(host_capabilities as ptr<void>) }
+    if host_enabled != null { free(host_enabled as ptr<void>) }
+    host_names = null
+    host_schemas = null
+    host_capabilities = null
+    host_enabled = null
+    host_ready = false
+    host_count = 0
+}
+
+export function chimera_tools_init() -> bool {
+    chimera_tools_shutdown()
+    host_names = calloc(HOST_TOOL_CAP as i64, 8) as ptr<string>
+    host_schemas = calloc(HOST_TOOL_CAP as i64, 8) as ptr<string>
+    host_capabilities = calloc(HOST_TOOL_CAP as i64, 4) as ptr<i32>
+    host_enabled = calloc(HOST_TOOL_CAP as i64, 4) as ptr<i32>
+    if host_names == null or host_schemas == null or host_capabilities == null or host_enabled == null {
+        chimera_tools_shutdown()
+        return false
+    }
+    host_ready = true
+    return true
+}
+
+export function chimera_tool_count() -> i32 {
+    return host_count
+}
+
+function host_lookup(name: string) -> i32 {
+    if !host_ready or name == null { return -1 }
+    for i in 0 to host_count {
+        if strcmp(host_names[i], name) == 0 { return i }
+    }
+    return -1
+}
+
+# Capabilities are labels for the external host: 1=read-only, 2=network,
+# 3=filesystem mutation, 4=process execution. They grant no runtime effects.
+export function chimera_tool_register(name: string, schema: string, effect_class: i32) -> bool {
+    if !host_ready or name == null or schema == null { return false }
+    if strlen(name) == 0 or strlen(name) > 128 or strlen(schema) == 0 or strlen(schema) > 8192 { return false }
+    if effect_class < 1 or effect_class > 4 or host_count >= HOST_TOOL_CAP or host_lookup(name) >= 0 { return false }
+    let name_copy: string = host_copy(name)
+    if name_copy == null { return false }
+    let schema_copy: string = host_copy(schema)
+    if schema_copy == null {
+        free(name_copy as ptr<void>)
+        return false
+    }
+    host_names[host_count] = name_copy
+    host_schemas[host_count] = schema_copy
+    host_capabilities[host_count] = effect_class
+    host_enabled[host_count] = 0
+    host_count = host_count + 1
+    return true
+}
+
+export function chimera_tool_allow(name: string, enabled: bool) -> bool {
+    let i: i32 = host_lookup(name)
+    if i < 0 { return false }
+    host_enabled[i] = 0
+    if enabled { host_enabled[i] = 1 }
+    return true
+}
+
+export function chimera_tool_at(index: i32) -> HostTool {
+    if !host_ready or index < 0 or index >= host_count {
+        return HostTool { found: false, enabled: false, effect_class: 0, name: "", schema: "" }
+    }
+    return HostTool {
+        found: true,
+        enabled: host_enabled[index] != 0,
+        effect_class: host_capabilities[index],
+        name: host_names[index],
+        schema: host_schemas[index]
+    }
+}
+
+export function chimera_tool_find(name: string) -> HostTool {
+    return chimera_tool_at(host_lookup(name))
+}
+
+export function chimera_tool_unregister(name: string) -> bool {
+    let index: i32 = host_lookup(name)
+    if index < 0 { return false }
+    free(host_names[index] as ptr<void>)
+    free(host_schemas[index] as ptr<void>)
+    let mut i: i32 = index
+    while i < host_count - 1 {
+        host_names[i] = host_names[i + 1]
+        host_schemas[i] = host_schemas[i + 1]
+        host_capabilities[i] = host_capabilities[i + 1]
+        host_enabled[i] = host_enabled[i + 1]
+        i = i + 1
+    }
+    host_count = host_count - 1
+    host_names[host_count] = null
+    host_schemas[host_count] = null
+    host_capabilities[host_count] = 0
+    host_enabled[host_count] = 0
+    return true
+}
+
+# Host invokes this after an approved tool completes. The actual operation,
+# JSON/schema parsing, sandboxing and result provenance are host obligations.
+export function chimera_tool_complete(observation: string, name: string, outcome: string, confidence: f64, load: f64, focus: f64) -> bool {
+    let tool: HostTool = chimera_tool_find(name)
+    if !tool.found or !tool.enabled { return false }
+    return chimera_record_external_step(observation, name, outcome, confidence, load, focus)
+}

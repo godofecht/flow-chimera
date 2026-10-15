@@ -1,0 +1,114 @@
+import "chimera.flow"
+import "introspection.flow"
+
+extern {
+    function strcmp(a: string, b: string) -> i32
+    function remove(path: string) -> i32
+}
+
+function equal(a: string, b: string) -> bool {
+    return strcmp(a, b) == 0
+}
+
+function test_vector_memory() -> i32 {
+    chimera_episode_clear()
+    let mut cat: array<f64, 8> = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut dog: array<f64, 8> = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut zero: array<f64, 8> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    if chimera_remember_vector("invalid", "none", "", &zero[0], 8) { return 1 }
+    if chimera_remember_vector("invalid", "none", "", &cat[0], 7) { return 2 }
+    if chimera_episode_size() != 0 { return 3 }
+    if !chimera_remember_vector("animal: cat", "watch", "purr", &cat[0], 8) { return 4 }
+    if !chimera_remember_vector("animal: dog", "watch", "bark", &dog[0], 8) { return 5 }
+    if !chimera_remember_vector("animal: cat again", "watch", "purr", &cat[0], 8) { return 6 }
+    let best: VectorMatch = chimera_recall_vector(&cat[0], 8, 0)
+    if !equal(best.observation, "animal: cat again") or best.similarity < 0.999 { return 7 }
+    let second: VectorMatch = chimera_recall_vector(&cat[0], 8, 1)
+    if !equal(second.observation, "animal: cat") { return 8 }
+    let third: VectorMatch = chimera_recall_vector(&cat[0], 8, 2)
+    if !equal(third.observation, "animal: dog") { return 9 }
+    if chimera_recall_vector(&cat[0], 8, 3).similarity != -2.0 { return 10 }
+    if chimera_recall_vector(&zero[0], 8, 0).similarity != -2.0 { return 11 }
+    if chimera_recall_vector(&cat[0], 7, 0).similarity != -2.0 { return 12 }
+    let first: Experience = chimera_episode_get(0)
+    if !equal(first.observation, "animal: cat") { return 13 }
+    if !chimera_remember("unembedded", "observe", "done") { return 14 }
+    if !equal(chimera_episode_get(3).observation, "unembedded") { return 15 }
+    if chimera_recall_vector(&cat[0], 8, 3).similarity != -2.0 { return 16 }
+    chimera_episode_clear()
+    if chimera_episode_size() != 0 { return 17 }
+    if chimera_recall_vector(&cat[0], 8, 0).similarity != -2.0 { return 18 }
+    return 0
+}
+
+function test_reflection() -> i32 {
+    if chimera_reflection_due() { return 1 }
+    if chimera_set_reflection_frequency(0) { return 2 }
+    if !chimera_set_reflection_frequency(2) { return 3 }
+    let a: ToolResult = chimera_step("one", "echo", "ok", 0, 0, 0.5, 0.2, 0.3)
+    if !a.success or chimera_reflection_due() { return 4 }
+    let b: ToolResult = chimera_step("two", "echo", "ok", 0, 0, 0.5, 0.2, 0.3)
+    if !b.success or !chimera_reflection_due() { return 5 }
+    chimera_monitor_enable(false)
+    if chimera_reflection_due() { return 6 }
+    chimera_monitor_enable(true)
+    if !chimera_reflection_due() { return 7 }
+    if chimera_state_size() != 2 { return 8 }
+    let st: CognitiveSnapshot = chimera_state_get(1)
+    if !equal(st.decision, "echo") or st.confidence != 0.5 { return 9 }
+    if !equal(chimera_state_get(-1).decision, "") { return 10 }
+    return 0
+}
+
+function test_introspection() -> i32 {
+    let model: ChimeraSelfModel = chimera_self_model()
+    if model.observations != 2 { return 1 }
+    if model.mean_processing_load != 0.2 { return 2 }
+    if model.mean_focus != 0.3 { return 3 }
+    if !model.reflection_due { return 4 }
+    let same_state: ChimeraWhatIf = chimera_what_if(0.5, 0.2, 0.3)
+    if !same_state.valid or same_state.requires_review { return 5 }
+    let changed: ChimeraWhatIf = chimera_what_if(0.9, 1.0, 1.0)
+    if !changed.valid or changed.behaviour_change < 0.5 { return 6 }
+    let invalid: ChimeraWhatIf = chimera_what_if(1.5, 0.5, 0.5)
+    if invalid.valid { return 7 }
+    return 0
+}
+
+function test_snapshot() -> i32 {
+    let mut e: array<f64, 8> = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    if !chimera_remember_vector("persisted cat", "watch", "purr", &e[0], 8) { return 1 }
+    if !chimera_work_add("persisted work") { return 2 }
+    let path: string = "/tmp/flow_chimera_snapshot_regression.bin"
+    if !chimera_snapshot_save(path) { return 3 }
+    if chimera_snapshot_load("/tmp/chimera_no_such_snapshot_file_19982") { return 4 }
+    if chimera_episode_size() != 3 { return 5 }
+    chimera_shutdown()
+    if !chimera_init() { return 6 }
+    if chimera_episode_size() != 0 or chimera_steps() != 0 { return 7 }
+    if !chimera_snapshot_load(path) { return 8 }
+    if chimera_episode_size() != 3 { return 9 }
+    if chimera_steps() != 2 { return 10 }
+    if chimera_state_size() != 2 { return 11 }
+    if !equal(chimera_work_get(chimera_work_size() - 1), "persisted work") { return 12 }
+    let recalled: VectorMatch = chimera_recall_vector(&e[0], 8, 0)
+    if !equal(recalled.observation, "persisted cat") or recalled.similarity < 0.999 { return 13 }
+    if !chimera_reflection_due() { return 14 }
+    let _deleted: i32 = remove(path)
+    return 0
+}
+
+function main() -> i32 {
+    if !chimera_init() { return 1 }
+    let v: i32 = test_vector_memory()
+    if v != 0 { print("vector failed: "); println(v); return 10 + v }
+    let r: i32 = test_reflection()
+    if r != 0 { print("reflection failed: "); println(r); return 50 + r }
+    let m: i32 = test_introspection()
+    if m != 0 { print("introspection failed: "); println(m); return 80 + m }
+    let p: i32 = test_snapshot()
+    if p != 0 { print("snapshot failed: "); println(p); return 100 + p }
+    chimera_shutdown()
+    println("PASS: semantic retrieval, snapshot persistence and reflection contract")
+    return 0
+}
