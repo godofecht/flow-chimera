@@ -196,3 +196,185 @@ export function chimera_semantic_recall(query: ptr<f64>, dim: i32, rank: i32) ->
     }
     return sem_none()
 }
+
+
+# CSM1 snapshot: magic, little-endian record count, then oldest-to-newest
+# length-prefixed UTF-8 strings, dimension, and native IEEE-754 f64 vectors.
+# Data is not encrypted; saving directly overwrites the selected trusted path.
+extern {
+    function fopen(path: string, mode: string) -> ptr<void>
+    function fclose(fp: ptr<void>) -> i32
+    function fputc(byte: i32, fp: ptr<void>) -> i32
+    function fgetc(fp: ptr<void>) -> i32
+    function fread(dest: ptr<u8>, size: i64, count: i64, fp: ptr<void>) -> i64
+    function fwrite(src: ptr<u8>, size: i64, count: i64, fp: ptr<void>) -> i64
+}
+
+function sm_path_valid(path: string) -> bool {
+    return path != null and strlen(path) > 0 and strlen(path) <= 4096
+}
+
+function sm_write_u32(fp: ptr<void>, number: i32) -> bool {
+    let mut value: i64 = number as i64
+    for i in 0 to 4 {
+        if fputc((value % 256) as i32, fp) < 0 { return false }
+        value = value / 256
+    }
+    return true
+}
+
+function sm_read_u32(fp: ptr<void>) -> i64 {
+    let mut n: i64 = 0
+    let mut factor: i64 = 1
+    for i in 0 to 4 {
+        let b: i32 = fgetc(fp)
+        if b < 0 { return -1 }
+        n = n + (b as i64) * factor
+        factor = factor * 256
+    }
+    return n
+}
+
+function sm_write_string(fp: ptr<void>, value: string) -> bool {
+    let n: i64 = strlen(value)
+    if n > SEM_TEXT_CAP { return false }
+    if !sm_write_u32(fp, n as i32) { return false }
+    if n == 0 { return true }
+    return fwrite(value as ptr<u8>, 1, n, fp) == n
+}
+
+function sm_read_string(fp: ptr<void>) -> string {
+    let n: i64 = sm_read_u32(fp)
+    if n < 0 or n > SEM_TEXT_CAP { return null }
+    let value: ptr<u8> = calloc(n + 1, 1) as ptr<u8>
+    if value == null { return null }
+    if n > 0 {
+        if fread(value, 1, n, fp) != n {
+            free(value as ptr<void>)
+            return null
+        }
+        for i in 0 to n as i32 {
+            if value[i] == 0 {
+                free(value as ptr<void>)
+                return null
+            }
+        }
+    }
+    value[n as i32] = 0
+    return value as string
+}
+
+# Ordered binary snapshot, including exact full-dimensional vectors.
+export function chimera_semantic_save(path: string) -> bool {
+    if !sem_ready or !sm_path_valid(path) { return false }
+    let fp: ptr<void> = fopen(path, "wb")
+    if fp == null { return false }
+    let mut ok: bool = true
+    if fputc(67, fp) < 0 or fputc(83, fp) < 0 or fputc(77, fp) < 0 or fputc(49, fp) < 0 { ok = false }
+    if ok and !sm_write_u32(fp, sem_size) { ok = false }
+    for i in 0 to sem_size {
+        if ok {
+            let idx: i32 = (sem_next - sem_size + i + SEM_CAP) % SEM_CAP
+            if !sm_write_string(fp, sem_observations[idx]) { ok = false }
+            if ok and !sm_write_string(fp, sem_actions[idx]) { ok = false }
+            if ok and !sm_write_string(fp, sem_outcomes[idx]) { ok = false }
+            if ok and !sm_write_u32(fp, sem_dims[idx]) { ok = false }
+            if ok {
+                if fwrite(sem_embeddings[idx] as ptr<u8>, 8, sem_dims[idx] as i64, fp) != sem_dims[idx] as i64 {
+                    ok = false
+                }
+            }
+        }
+    }
+    if fclose(fp) != 0 { ok = false }
+    return ok
+}
+
+# Rejects malformed files BEFORE replacing current memory. Each parse uses
+# separate temporary storage, so a failed read cannot mutate the live ring.
+export function chimera_semantic_load(path: string) -> bool {
+    if !sem_ready or !sm_path_valid(path) { return false }
+    let fp: ptr<void> = fopen(path, "rb")
+    if fp == null { return false }
+    let mut ok: bool = fgetc(fp) == 67 and fgetc(fp) == 83 and fgetc(fp) == 77 and fgetc(fp) == 49
+    let mut count: i32 = 0
+    if ok {
+        let n: i64 = sm_read_u32(fp)
+        if n < 0 or n > SEM_CAP { ok = false }
+        else { count = n as i32 }
+    }
+    let observations: ptr<string> = calloc(SEM_CAP as i64, 8) as ptr<string>
+    let actions: ptr<string> = calloc(SEM_CAP as i64, 8) as ptr<string>
+    let outcomes: ptr<string> = calloc(SEM_CAP as i64, 8) as ptr<string>
+    let vectors: ptr<ptr<f64>> = calloc(SEM_CAP as i64, 8) as ptr<ptr<f64>>
+    let dimensions: ptr<i32> = calloc(SEM_CAP as i64, 4) as ptr<i32>
+    if observations == null or actions == null or outcomes == null or vectors == null or dimensions == null { ok = false }
+
+    if ok {
+        for i in 0 to count {
+            if ok {
+                observations[i] = sm_read_string(fp)
+                if observations[i] == null { ok = false }
+            }
+            if ok {
+                actions[i] = sm_read_string(fp)
+                if actions[i] == null { ok = false }
+            }
+            if ok {
+                outcomes[i] = sm_read_string(fp)
+                if outcomes[i] == null { ok = false }
+            }
+            if ok {
+                let d: i64 = sm_read_u32(fp)
+                if d < 1 or d > SEM_DIM_CAP { ok = false }
+                else { dimensions[i] = d as i32 }
+            }
+            if ok {
+                vectors[i] = calloc(dimensions[i] as i64, 8) as ptr<f64>
+                if vectors[i] == null { ok = false }
+            }
+            if ok {
+                if fread(vectors[i] as ptr<u8>, 8, dimensions[i] as i64, fp) != dimensions[i] as i64 {
+                    ok = false
+                } elif sem_norm(vectors[i], dimensions[i]) <= 0.0 {
+                    ok = false
+                }
+            }
+        }
+    }
+    if ok and fgetc(fp) >= 0 { ok = false }
+    if fclose(fp) != 0 { ok = false }
+
+    if !ok {
+        if observations != null {
+            for i in 0 to SEM_CAP { sem_release(observations[i]) }
+            free(observations as ptr<void>)
+        }
+        if actions != null {
+            for i in 0 to SEM_CAP { sem_release(actions[i]) }
+            free(actions as ptr<void>)
+        }
+        if outcomes != null {
+            for i in 0 to SEM_CAP { sem_release(outcomes[i]) }
+            free(outcomes as ptr<void>)
+        }
+        if vectors != null {
+            for i in 0 to SEM_CAP {
+                if vectors[i] != null { free(vectors[i] as ptr<void>) }
+            }
+            free(vectors as ptr<void>)
+        }
+        if dimensions != null { free(dimensions as ptr<void>) }
+        return false
+    }
+    chimera_semantic_shutdown()
+    sem_observations = observations
+    sem_actions = actions
+    sem_outcomes = outcomes
+    sem_embeddings = vectors
+    sem_dims = dimensions
+    sem_size = count
+    sem_next = count % SEM_CAP
+    sem_ready = true
+    return true
+}
