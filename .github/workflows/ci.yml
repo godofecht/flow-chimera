@@ -50,3 +50,6 @@ jobs:
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           curl --silent --show-error --fail --retry 8 --retry-delay 1 --retry-connrefused http://127.0.0.1:18764/health
           ./flow-toolchain/flow run src/ollama_provider_test.flow
+          CHIMERA_SEMANTIC_DB=/tmp/chimera_ollama_demo_snapshot.bin ./flow-toolchain/flow run src/ollama_demo.flow
+          test -s /tmp/chimera_ollama_demo_snapshot.bin
+          rm -f /tmp/chimera_ollama_demo_snapshot.bin
