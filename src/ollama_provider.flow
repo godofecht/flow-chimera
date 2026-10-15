@@ -38,7 +38,7 @@ function ollama_http_fail() -> OllamaHttpResult {
 
 # Require a *literal* loopback hostname with a numeric port and exact endpoint.
 # No userinfo, alternate paths, fragments, redirects or proxy protocols.
-export function chimera_ollama_url_valid(url: string) -> bool {
+function o_url_endpoint_valid(url: string, route: string) -> bool {
     if url == null { return false }
     let n: i32 = strlen(url) as i32
     let prefix: ptr<u8> = "http://127.0.0.1:" as ptr<u8>
@@ -57,13 +57,21 @@ export function chimera_ollama_url_valid(url: string) -> bool {
         at = at + 1
     }
     if digits == 0 or port < 1 or port > 65535 { return false }
-    let route: string = "/api/embed"
+    let route_size: i32 = strlen(route) as i32
+    if n - at != route_size { return false }
     let end: ptr<u8> = route as ptr<u8>
-    if n - at != 10 { return false }
-    for i in 0 to 10 {
+    for i in 0 to route_size {
         if p[at + i] != end[i] { return false }
     }
     return true
+}
+
+export function chimera_ollama_url_valid(url: string) -> bool {
+    return o_url_endpoint_valid(url, "/api/embed")
+}
+
+export function chimera_ollama_generate_url_valid(url: string) -> bool {
+    return o_url_endpoint_valid(url, "/api/generate")
 }
 
 # Only installed model names; no whitespace, slash, flags, or control bytes.
@@ -154,12 +162,10 @@ function o_write_all(fd: i32, content: string) -> bool {
 
 # POST only to validated loopback /api/embed. Content and response are bounded.
 # The caller must free a nonempty response body regardless of success.
-export function chimera_ollama_post(body: string) -> OllamaHttpResult {
+function o_post_url(body: string, url: string) -> OllamaHttpResult {
+    if body == null { return ollama_http_fail() }
     let size: i64 = strlen(body)
     if size <= 0 or size >= OLLAMA_REQUEST_CAP as i64 { return ollama_http_fail() }
-    let mut url: string = getenv("CHIMERA_OLLAMA_URL")
-    if url == null { url = OLLAMA_DEFAULT_URL }
-    if !chimera_ollama_url_valid(url) { return ollama_http_fail() }
 
     let mut request_pipe: array<i32, 2> = [-1, -1]
     let mut response_pipe: array<i32, 2> = [-1, -1]
@@ -219,6 +225,38 @@ export function chimera_ollama_post(body: string) -> OllamaHttpResult {
         bytes: bytes,
         exit_status: status
     }
+}
+
+# Explicitly separated routes with independently allowlisted local endpoints.
+export function chimera_ollama_post(body: string) -> OllamaHttpResult {
+    let mut url: string = getenv("CHIMERA_OLLAMA_URL")
+    if url == null { url = OLLAMA_DEFAULT_URL }
+    if !chimera_ollama_url_valid(url) { return ollama_http_fail() }
+    return o_post_url(body, url)
+}
+
+export function chimera_ollama_generate_post(body: string) -> OllamaHttpResult {
+    let mut url: string = getenv("CHIMERA_OLLAMA_GENERATE_URL")
+    if url == null { url = "http://127.0.0.1:11434/api/generate" }
+    if !chimera_ollama_generate_url_valid(url) { return ollama_http_fail() }
+    return o_post_url(body, url)
+}
+
+# Ollama generation returns JSON containing a non-streamed 'response' field.
+# Constrained format is requested, but still validated by the action parser.
+export function chimera_ollama_generate_request(model: string, prompt: string) -> string {
+    if !chimera_ollama_model_valid(model) or prompt == null { return null }
+    if strlen(prompt) < 1 or strlen(prompt) > 8192 { return null }
+    let buffer: ptr<u8> = calloc(OLLAMA_REQUEST_CAP as i64, 1) as ptr<u8>
+    if buffer == null { return null }
+    let mut at: i32 = o_append(buffer, 0, "{\"model\":")
+    if at >= 0 { at = o_append_quoted(buffer, at, model) }
+    if at >= 0 { at = o_append(buffer, at, ",\"prompt\":") }
+    if at >= 0 { at = o_append_quoted(buffer, at, prompt) }
+    if at >= 0 { at = o_append(buffer, at, ",\"stream\":false,\"format\":\"json\"}") }
+    if at < 0 { free(buffer as ptr<void>); return null }
+    buffer[at] = 0
+    return buffer as string
 }
 
 # One real local model inference request. Caller supplies a full-size buffer.
