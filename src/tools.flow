@@ -15,7 +15,7 @@ const HOST_TOOL_CAP: i32 = 16
 export struct HostTool {
     found: bool,
     enabled: bool,
-    capability: i32,
+    effect_class: i32,
     name: string,
     schema: string
 }
@@ -85,10 +85,10 @@ function host_lookup(name: string) -> i32 {
 
 # Capabilities are labels for the external host: 1=read-only, 2=network,
 # 3=filesystem mutation, 4=process execution. They grant no runtime effects.
-export function chimera_tool_register(name: string, schema: string, capability: i32) -> bool {
+export function chimera_tool_register(name: string, schema: string, effect_class: i32) -> bool {
     if !host_ready or name == null or schema == null { return false }
     if strlen(name) == 0 or strlen(name) > 128 or strlen(schema) == 0 or strlen(schema) > 8192 { return false }
-    if capability < 1 or capability > 4 or host_count >= HOST_TOOL_CAP or host_lookup(name) >= 0 { return false }
+    if effect_class < 1 or effect_class > 4 or host_count >= HOST_TOOL_CAP or host_lookup(name) >= 0 { return false }
     let name_copy: string = host_copy(name)
     if name_copy == null { return false }
     let schema_copy: string = host_copy(schema)
@@ -98,7 +98,7 @@ export function chimera_tool_register(name: string, schema: string, capability: 
     }
     host_names[host_count] = name_copy
     host_schemas[host_count] = schema_copy
-    host_capabilities[host_count] = capability
+    host_capabilities[host_count] = effect_class
     host_enabled[host_count] = 0
     host_count = host_count + 1
     return true
@@ -114,12 +114,12 @@ export function chimera_tool_allow(name: string, enabled: bool) -> bool {
 
 export function chimera_tool_at(index: i32) -> HostTool {
     if !host_ready or index < 0 or index >= host_count {
-        return HostTool { found: false, enabled: false, capability: 0, name: "", schema: "" }
+        return HostTool { found: false, enabled: false, effect_class: 0, name: "", schema: "" }
     }
     return HostTool {
         found: true,
         enabled: host_enabled[index] != 0,
-        capability: host_capabilities[index],
+        effect_class: host_capabilities[index],
         name: host_names[index],
         schema: host_schemas[index]
     }
