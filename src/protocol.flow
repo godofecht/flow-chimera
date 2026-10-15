@@ -269,18 +269,34 @@ function j_field(object_at: i32, field: string) -> i32 {
     return -1
 }
 
-function j_int(at: i32) -> i32 {
-    if at < 0 or at >= j_size { return 0 }
+struct ParsedInteger {
+    valid: bool,
+    value: i32
+}
+
+function j_integer(at: i32) -> ParsedInteger {
+    let invalid: ParsedInteger = ParsedInteger { valid: false, value: 0 }
+    if at < 0 or at >= j_size { return invalid }
+    let end: i32 = j_number_end(at)
+    if end <= at { return invalid }
     let mut p: i32 = at
-    let mut sign: i32 = 1
-    if j_source[p] == 45 { sign = -1; p = p + 1 }
-    let mut value: i32 = 0
-    while p < j_size and j_digit(j_source[p]) {
-        if value > 200000000 { return 0 }
-        value = value * 10 + ((j_source[p] - 48) as i32)
+    let mut negative: bool = false
+    if j_source[p] == 45 {
+        negative = true
         p = p + 1
     }
-    return value * sign
+    let mut value: i64 = 0
+    while p < end and j_digit(j_source[p]) {
+        value = value * 10 + ((j_source[p] - 48) as i64)
+        if value > 2147483648 { return invalid }
+        p = p + 1
+    }
+    # Reject fractional or scientific values for schema integer fields.
+    if p != end { return invalid }
+    if !negative and value > 2147483647 { return invalid }
+    let mut signed: i64 = value
+    if negative { signed = 0 - value }
+    return ParsedInteger {valid: true, value: signed as i32}
 }
 
 export function chimera_parse_action(json: string) -> ParsedAction {
@@ -307,12 +323,14 @@ export function chimera_parse_action(json: string) -> ParsedAction {
     let mut a: i32 = 0
     let mut b: i32 = 0
     if ap >= 0 {
-        if j_number_end(ap) <= ap { return invalid }
-        a = j_int(ap)
+        let parsed_a: ParsedInteger = j_integer(ap)
+        if !parsed_a.valid { return invalid }
+        a = parsed_a.value
     }
     if bp >= 0 {
-        if j_number_end(bp) <= bp { return invalid }
-        b = j_int(bp)
+        let parsed_b: ParsedInteger = j_integer(bp)
+        if !parsed_b.valid { return invalid }
+        b = parsed_b.value
     }
     return ParsedAction {valid: true, tool_name: tool, payload: payload, a: a, b: b}
 }
