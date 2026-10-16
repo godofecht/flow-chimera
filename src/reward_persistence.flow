@@ -1,0 +1,114 @@
+# Bounded persistence for the Flow-native linear preference ranker.
+# CRW1: magic, little-endian u32 update count, eight native IEEE-754 f64
+# weights, little-endian Adler-32 over update bytes and weight bytes.
+# Host must supply a trusted path; save is not crash-atomic or encrypted.
+import "reward.flow"
+
+extern {
+    function fopen(path: string, mode: string) -> ptr<void>
+    function fclose(fp: ptr<void>) -> i32
+    function fputc(byte: i32, fp: ptr<void>) -> i32
+    function fgetc(fp: ptr<void>) -> i32
+    function fwrite(src: ptr<u8>, size: i64, count: i64, fp: ptr<void>) -> i64
+    function fread(dst: ptr<u8>, size: i64, count: i64, fp: ptr<void>) -> i64
+    function strlen(value: string) -> i64
+}
+
+export struct RewardLoadResult {
+    success: bool,
+    model: PreferenceModel
+}
+
+function rp_valid_path(path: string) -> bool {
+    return path != null and strlen(path) > 0 and strlen(path) <= 4096
+}
+
+function rp_valid_model(model: PreferenceModel) -> bool {
+    if model.updates < 0 or model.trained != (model.updates > 0) { return false }
+    for i in 0 to 8 {
+        let w: f64 = model.weights[i]
+        if w != w or w > 1000000.0 or w < -1000000.0 { return false }
+    }
+    return true
+}
+
+function rp_write_u32(fp: ptr<void>, value: i64) -> bool {
+    if value < 0 or value > 4294967295 { return false }
+    let mut n: i64 = value
+    for i in 0 to 4 {
+        if fputc((n % 256) as i32, fp) < 0 { return false }
+        n = n / 256
+    }
+    return true
+}
+
+function rp_read_u32(fp: ptr<void>) -> i64 {
+    let mut value: i64 = 0
+    let mut factor: i64 = 1
+    for i in 0 to 4 {
+        let b: i32 = fgetc(fp)
+        if b < 0 { return -1 }
+        value = value + (b as i64) * factor
+        factor = factor * 256
+    }
+    return value
+}
+
+function rp_checksum(updates: i32, weights: ptr<u8>) -> i64 {
+    let mut a: i64 = 1
+    let mut b: i64 = 0
+    let mut n: i64 = updates as i64
+    for i in 0 to 4 {
+        a = (a + n % 256) % 65521
+        b = (b + a) % 65521
+        n = n / 256
+    }
+    for i in 0 to 64 {
+        a = (a + weights[i] as i64) % 65521
+        b = (b + a) % 65521
+    }
+    return b * 65536 + a
+}
+
+export function chimera_reward_save(path: string, model: PreferenceModel) -> bool {
+    if !rp_valid_path(path) or !rp_valid_model(model) { return false }
+    let mut current: PreferenceModel = model
+    let bytes: ptr<u8> = &current.weights[0] as ptr<u8>
+    let fp: ptr<void> = fopen(path, "wb")
+    if fp == null { return false }
+    let mut ok: bool = true
+    if fputc(67, fp) < 0 or fputc(82, fp) < 0 or fputc(87, fp) < 0 or fputc(49, fp) < 0 { ok = false }
+    if ok and !rp_write_u32(fp, current.updates as i64) { ok = false }
+    if ok and fwrite(bytes, 1, 64, fp) != 64 { ok = false }
+    if ok and !rp_write_u32(fp, rp_checksum(current.updates, bytes)) { ok = false }
+    if fclose(fp) != 0 { ok = false }
+    return ok
+}
+
+# Failed reads preserve the supplied previous model.
+export function chimera_reward_load(path: string, previous: PreferenceModel) -> RewardLoadResult {
+    let failed: RewardLoadResult = RewardLoadResult {success: false, model: previous}
+    if !rp_valid_path(path) { return failed }
+    let fp: ptr<void> = fopen(path, "rb")
+    if fp == null { return failed }
+    let mut ok: bool = fgetc(fp) == 67 and fgetc(fp) == 82 and fgetc(fp) == 87 and fgetc(fp) == 49
+    let mut next: PreferenceModel = chimera_reward_init()
+    if ok {
+        let updates: i64 = rp_read_u32(fp)
+        if updates < 0 or updates > 2147483647 { ok = false }
+        else {
+            next.updates = updates as i32
+            next.trained = next.updates > 0
+        }
+    }
+    let bytes: ptr<u8> = &next.weights[0] as ptr<u8>
+    if ok and fread(bytes, 1, 64, fp) != 64 { ok = false }
+    if ok {
+        let checksum: i64 = rp_read_u32(fp)
+        if checksum < 0 or checksum != rp_checksum(next.updates, bytes) { ok = false }
+    }
+    if ok and fgetc(fp) >= 0 { ok = false }
+    if fclose(fp) != 0 { ok = false }
+    if !ok or !rp_valid_model(next) { return failed }
+    return RewardLoadResult {success: true, model: next}
+}

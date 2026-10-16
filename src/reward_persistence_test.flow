@@ -1,0 +1,25 @@
+import "reward_persistence.flow"
+
+extern {
+    function remove(path: string) -> i32
+}
+
+function main() -> i32 {
+    let path: string = "flow_chimera_reward_test.bin"
+    let mut chosen: array<f64, 8> = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut rejected: array<f64, 8> = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut model: PreferenceModel = chimera_reward_init()
+    for i in 0 to 30 {
+        model = chimera_reward_train_pair(model, &chosen[0], &rejected[0], 8, 0.2)
+    }
+    if !chimera_reward_save(path, model) { return 1 }
+    let empty: PreferenceModel = chimera_reward_init()
+    let result: RewardLoadResult = chimera_reward_load(path, empty)
+    if !result.success or result.model.updates != 30 { return 2 }
+    for i in 0 to 8 {
+        if result.model.weights[i] != model.weights[i] { return 3 }
+    }
+    let _removed: i32 = remove(path)
+    println("PASS: CRW1 reward model persistence")
+    return 0
+}
