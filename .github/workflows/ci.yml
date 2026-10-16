@@ -25,6 +25,7 @@ jobs:
           ./flow-toolchain/flow run src/provider_test.flow
           ./flow-toolchain/flow run src/reward_test.flow
           ./flow-toolchain/flow run src/reward_persistence_test.flow
+          ./flow-toolchain/flow run src/reward_persistence_corrupt_test.flow
           ./flow-toolchain/flow run src/demo.flow
 
       - name: Local Gemini-compatible integration

@@ -1,0 +1,37 @@
+import "reward_persistence.flow"
+
+extern {
+    function fopen(path: string, mode: string) -> ptr<void>
+    function fclose(fp: ptr<void>) -> i32
+    function fputc(byte: i32, fp: ptr<void>) -> i32
+    function fseek(fp: ptr<void>, offset: i64, origin: i32) -> i32
+    function remove(path: string) -> i32
+}
+
+function main() -> i32 {
+    let path: string = "flow_chimera_reward_corruption_test.bin"
+    let mut model: PreferenceModel = chimera_reward_init()
+    model.weights[0] = 0.5
+    if !chimera_reward_save(path, model) { return 1 }
+    let fp: ptr<void> = fopen(path, "r+b")
+    if fp == null { return 2 }
+    if fseek(fp, 8, 0) != 0 { return 3 }
+    if fputc(255, fp) < 0 { return 4 }
+    if fclose(fp) != 0 { return 5 }
+    let changed: RewardLoadResult = chimera_reward_load(path, model)
+    if changed.success or changed.model.weights[0] != 0.5 { return 6 }
+    if !chimera_reward_save(path, model) { return 7 }
+    let tail: ptr<void> = fopen(path, "ab")
+    if tail == null { return 8 }
+    if fputc(88, tail) < 0 { return 9 }
+    if fclose(tail) != 0 { return 10 }
+    if chimera_reward_load(path, model).success { return 11 }
+    let short: ptr<void> = fopen(path, "wb")
+    if short == null { return 12 }
+    if fputc(67, short) < 0 { return 13 }
+    if fclose(short) != 0 { return 14 }
+    if chimera_reward_load(path, model).success { return 15 }
+    let _removed: i32 = remove(path)
+    println("PASS: CRW1 corruption, trailing bytes and truncation rejected")
+    return 0
+}

@@ -13,7 +13,7 @@ Reference: [LarytheLord/Project-Chimera](https://github.com/LarytheLord/Project-
 | `consciousness/integration.py` | Monitoring toggles, reflection period, external outcome recording | Partial |
 | `rlhf/oracle.py` | `chimera_best_candidate`, `chimera_reward_argmax` | Partial: numerical candidate ranking; not wired to trained text model |
 | `cognitive_core/prometheus_core.py` — Gemini HTTP | `provider.flow` and `protocol.flow` with POSIX curl HTTP, secret header pipe, response parsing and request serialization | Functional integration tested against local HTTP fixture; real Gemini account not tested |
-| `rlhf/reward_model.py` — DistilBERT/TRL training | `reward.flow` pairwise online eight-feature linear ranker | Alternative ranker: numeric preference training verified, but no DistilBERT/tokenizer or save/load |
+| `rlhf/reward_model.py` — DistilBERT/TRL training | `reward.flow` pairwise online eight-feature linear ranker | Alternative ranker: numeric preference training and CRW1 save/load regression tests; no DistilBERT/tokenizer |
 | `consciousness/emotion.py` / `emotion/detector.py` | None | Missing external emotion classifiers |
 | `consciousness/conscious_agent.py` | Core state/reflection plus `live_agent.flow` prompt orchestration and remote model generation | Partial: numeric self-monitoring and allowlisted action loop; not full Python semantics |
 | Knight Medicare integration / CLI | Bounded environment-configured session entrypoint `live_cli.flow` | CLI partial; Knight Medicare bridge missing |
@@ -32,7 +32,7 @@ The upstream terms “consciousness” and “self-awareness” are labels for i
 
 ## Work remaining for complete parity
 
-The remaining gaps are Ollama/Chroma-style **model-generated semantic embeddings** (the current eight-dimensional vectors are caller-provided), user-scoped web/file/terminal tools with JSON Schema argument validation and actual sandboxed execution, DistilBERT/TRL-compatible preference training and model loading, local Hugging Face emotion inference, unrestricted configurable model selection, arbitrary-scope Narcissus attention/emotion history, application-level Knight Medicare integration and differential tests against upstream. The Flow-native linear preference ranker is **not** upstream model parity. The live Gemini transport is verified against a deterministic HTTP fixture, not Google production. No benchmark or general intelligence/consciousness result is claimed.
+The remaining gaps are Ollama/Chroma-style **model-generated semantic embeddings** (the current eight-dimensional vectors are caller-provided), user-scoped web/file/terminal tools with JSON Schema argument validation and actual sandboxed execution, DistilBERT/TRL-compatible preference training and pretrained model loading, local Hugging Face emotion inference, unrestricted configurable model selection, arbitrary-scope Narcissus attention/emotion history, application-level Knight Medicare integration and differential tests against upstream. The Flow-native linear preference ranker is **not** upstream model parity. The live Gemini transport is verified against a deterministic HTTP fixture, not Google production. No benchmark or general intelligence/consciousness result is claimed.
 
 
 ## Native Ollama progress (16 October 2026)
